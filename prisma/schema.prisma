@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model MccUser {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  name         String
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@map("mcc_users")
+}
+
+model CepClaro {
+  cep String @id @db.Char(8)
+
+  @@map("ceps_claro")
+}
+
+model CepTim {
+  cep String @id @db.Char(8)
+
+  @@map("ceps_tim")
+}
+
+model CidadePromoClaro {
+  cidade String @id
+
+  @@map("cidades_promo_claro")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model nio_cache_meta {
+  id         Int       @id
+  updated_at DateTime? @db.Timestamptz(6)
+  total      Int?
+}
+
+model CepNio {
+  cep String @id @db.Char(8)
+
+  @@map("ceps_nio")
+}
+
+model CpfCobertura {
+  cpf          String   @id @db.VarChar(11)
+  cep          String?  @db.Char(8)
+  contato      String?  @db.VarChar(13)
+  cobertura    String
+  motivoRecusa String?  @map("motivo_recusa")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@map("cpfs_cobertura")
+}
+
+model AppConfig {
+  key       String   @id @db.VarChar(50)
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@map("app_config")
+}
