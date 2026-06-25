@@ -9,7 +9,7 @@ export const maxDuration = 300;
 const OPENCEP_CONCURRENCY = 10;
 const WAVALIDATOR_BATCH_SIZE = 100;
 const WAVALIDATOR_CONCURRENCY = 1;
-const WAVALIDATOR_INTER_BATCH_DELAY_MS = 5000;
+const WAVALIDATOR_INTER_BATCH_DELAY_MS = 3000;
 
 const WAVALIDATOR_API_KEY = process.env.WAVALIDATOR_API_KEY ?? "";
 
@@ -115,7 +115,7 @@ async function processWavalidatorBatch(
   for (let attempt = 0; attempt <= WAVALIDATOR_MAX_RETRIES; attempt++) {
     try {
       if (attempt > 0) {
-        const backoff = 60000 * attempt;
+        const backoff = 15000 * attempt;
         console.log(`[wavalidator] ${batchLabel} retry ${attempt}/${WAVALIDATOR_MAX_RETRIES} após ${backoff}ms`);
         await new Promise((r) => setTimeout(r, backoff));
       }
@@ -128,9 +128,9 @@ async function processWavalidatorBatch(
       }
 
       if (res.status === 429) {
-        console.warn(`[wavalidator] ${batchLabel} rate limited (429) - aguardando 60s antes de retry`);
+        console.warn(`[wavalidator] ${batchLabel} rate limited (429) - aguardando 15s antes de retry`);
         lastError = new Error("Rate limited");
-        await new Promise((r) => setTimeout(r, 60000));
+        await new Promise((r) => setTimeout(r, 15000));
         continue;
       }
 
