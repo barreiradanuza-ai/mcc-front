@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import {
@@ -18,6 +18,7 @@ import {
   MessageCircleOff,
   Wallet,
   ExternalLink,
+  Clock,
 } from "lucide-react";
 
 interface ProcessResult {
@@ -35,6 +36,8 @@ interface ProcessResult {
   creditsRemaining: number | null;
 }
 
+const POLL_INTERVAL_MS = 3000;
+
 export default function MccDashboard() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -43,6 +46,12 @@ export default function MccDashboard() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<ProcessResult | null>(null);
   const [progressMsg, setProgressMsg] = useState("");
+  const [progressChecked, setProgressChecked] = useState(0);
+  const [progressTotal, setProgressTotal] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef<number>(0);
 
   const accept = ".xlsx,.xls";
 
@@ -64,92 +73,122 @@ export default function MccDashboard() {
     handleFile(e.dataTransfer.files[0]);
   }, []);
 
+  function stopTimers() {
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
+    pollTimerRef.current = null;
+    elapsedTimerRef.current = null;
+  }
+
+  useEffect(() => {
+    return () => stopTimers();
+  }, []);
+
+  async function pollJobStatus(jobId: string) {
+    try {
+      const res = await fetch(`/api/mcc/jobs/${jobId}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setError(data?.error ?? `Erro ao verificar status (${res.status})`);
+        setLoading(false);
+        stopTimers();
+        return;
+      }
+
+      const data = await res.json();
+
+      if (data.progressMsg) setProgressMsg(data.progressMsg);
+      if (data.progressChecked !== undefined) setProgressChecked(data.progressChecked);
+      if (data.progressTotal !== undefined) setProgressTotal(data.progressTotal);
+
+      if (data.status === "done") {
+        stopTimers();
+        // Download the file
+        const downloadRes = await fetch(`/api/mcc/jobs/${jobId}/download`);
+        if (!downloadRes.ok) {
+          setError("Erro ao baixar o arquivo processado");
+          setLoading(false);
+          return;
+        }
+        const blob = await downloadRes.blob();
+        const downloadUrl = URL.createObjectURL(blob);
+
+        window.dispatchEvent(new Event("wavalidator:credits-updated"));
+
+        const stats = data.resultStats;
+        setResult({
+          total: stats.total,
+          withCoverage: stats.withCoverage,
+          withoutCoverage: stats.withoutCoverage,
+          incorrectNumber: stats.incorrectNumber,
+          withoutWhatsApp: stats.withoutWhatsApp,
+          invalid: stats.invalid,
+          skippedCpfs: stats.skippedCpfs,
+          newCpfsSaved: stats.newCpfsSaved,
+          elapsedMs: stats.elapsedMs,
+          creditsRemaining: stats.creditsRemaining ?? null,
+          downloadUrl,
+          filename: data.resultFilename,
+        });
+        setLoading(false);
+        setProgressMsg("");
+      } else if (data.status === "error") {
+        stopTimers();
+        setError(data.errorMessage ?? "Erro ao processar planilha");
+        setLoading(false);
+      } else {
+        // Still processing — poll again
+        pollTimerRef.current = setTimeout(() => pollJobStatus(jobId), POLL_INTERVAL_MS);
+      }
+    } catch {
+      stopTimers();
+      setError("Erro de conexão ao verificar status do processamento");
+      setLoading(false);
+    }
+  }
+
   async function handleUpload() {
     if (!file) return;
     setLoading(true);
     setError("");
     setResult(null);
     setProgressMsg("Enviando planilha...");
+    setProgressChecked(0);
+    setProgressTotal(0);
+    setElapsedSeconds(0);
+    startTimeRef.current = Date.now();
+
+    // Start elapsed timer
+    elapsedTimerRef.current = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
 
     try {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await fetch("/api/mcc/process", {
+      const res = await fetch("/api/mcc/jobs", {
         method: "POST",
         body: formData,
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        setError(data?.error ?? `Erro ao processar (${res.status})`);
+        setError(data?.error ?? `Erro ao enviar planilha (${res.status})`);
         setLoading(false);
-        setProgressMsg("");
+        stopTimers();
         return;
       }
 
-      const reader = res.body?.getReader();
-      if (!reader) {
-        setError("Erro: resposta sem body");
-        setLoading(false);
-        setProgressMsg("");
-        return;
-      }
+      const { jobId } = await res.json();
+      setProgressMsg("Processando planilha em segundo plano...");
 
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const msg = JSON.parse(line);
-            if (msg.type === "progress") {
-              setProgressMsg(msg.message ?? "Processando...");
-            } else if (msg.type === "done") {
-              const base64 = msg.fileBase64;
-              const binaryStr = atob(base64);
-              const bytes = new Uint8Array(binaryStr.length);
-              for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-              const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-              const downloadUrl = URL.createObjectURL(blob);
-
-              window.dispatchEvent(new Event("wavalidator:credits-updated"));
-
-              setResult({
-                total: msg.total,
-                withCoverage: msg.withCoverage,
-                withoutCoverage: msg.withoutCoverage,
-                incorrectNumber: msg.incorrectNumber,
-                withoutWhatsApp: msg.withoutWhatsApp,
-                invalid: msg.invalid,
-                skippedCpfs: msg.skippedCpfs,
-                newCpfsSaved: msg.newCpfsSaved,
-                elapsedMs: msg.elapsedMs,
-                creditsRemaining: msg.creditsRemaining ?? null,
-                downloadUrl,
-                filename: msg.filename,
-              });
-            } else if (msg.type === "error") {
-              setError(msg.error ?? "Erro ao processar planilha");
-            }
-          } catch {
-            // ignore malformed JSON lines
-          }
-        }
-      }
+      // Start polling
+      pollTimerRef.current = setTimeout(() => pollJobStatus(jobId), POLL_INTERVAL_MS);
     } catch {
-      setError("Erro de conexão ao processar planilha");
-    } finally {
+      setError("Erro de conexão ao enviar planilha");
       setLoading(false);
-      setProgressMsg("");
+      stopTimers();
     }
   }
 
@@ -166,7 +205,14 @@ export default function MccDashboard() {
     setFile(null);
     setResult(null);
     setError("");
+    setProgressMsg("");
+    setProgressChecked(0);
+    setProgressTotal(0);
+    setElapsedSeconds(0);
+    stopTimers();
   }
+
+  const progressPercent = progressTotal > 0 ? Math.round((progressChecked / progressTotal) * 100) : 0;
 
   return (
     <div className="flex flex-col gap-8">
@@ -207,11 +253,12 @@ export default function MccDashboard() {
                 onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={onDrop}
-                onClick={() => inputRef.current?.click()}
-                onKeyDown={(e) => e.key === "Enter" && inputRef.current?.click()}
+                onClick={() => !loading && inputRef.current?.click()}
+                onKeyDown={(e) => e.key === "Enter" && !loading && inputRef.current?.click()}
                 className={`
                   group relative flex flex-col items-center justify-center gap-4 rounded-xl border-2 border-dashed
-                  px-6 py-14 transition-all duration-200 cursor-pointer
+                  px-6 py-14 transition-all duration-200
+                  ${loading ? "cursor-default" : "cursor-pointer"}
                   ${dragOver
                     ? "border-mcc-blue bg-mcc-light scale-[1.01]"
                     : file
@@ -256,10 +303,30 @@ export default function MccDashboard() {
               </div>
 
               {/* Progress */}
-              {loading && progressMsg && (
-                <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
-                  <Loader2 className="size-4 animate-spin text-blue-600" />
-                  <p className="text-sm font-medium text-blue-700">{progressMsg}</p>
+              {loading && (
+                <div className="flex flex-col gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-4">
+                  <div className="flex items-center gap-3">
+                    <Loader2 className="size-4 shrink-0 animate-spin text-blue-600" />
+                    <p className="text-sm font-medium text-blue-700">{progressMsg || "Processando..."}</p>
+                  </div>
+                  {progressTotal > 0 && (
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex justify-between text-xs text-blue-600">
+                        <span>{progressChecked} / {progressTotal} números verificados</span>
+                        <span>{progressPercent}%</span>
+                      </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-blue-200">
+                        <div
+                          className="h-full rounded-full bg-blue-500 transition-all duration-500"
+                          style={{ width: `${progressPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1.5 text-xs text-blue-500">
+                    <Clock className="size-3" />
+                    <span>Tempo decorrido: {elapsedSeconds}s — O processamento continua mesmo se você fechar esta aba</span>
+                  </div>
                 </div>
               )}
 
@@ -383,26 +450,17 @@ export default function MccDashboard() {
         </div>
       </div>
 
-      {/* Info footer */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h3 className="text-sm font-semibold text-slate-700">Valores possíveis de cobertura</h3>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {["Claro", "Claro Promo", "Tim", "Nio", "Tim e Claro", "Tim e Claro Promo", "Nio e Claro", "Nio e Claro Promo", "Tim e Nio", "Claro e Tim e Nio", "Claro Promo e Tim e Nio", "Sem cobertura", "CEP inválido"].map(
-            (label) => (
-              <span
-                key={label}
-                className={`rounded-full px-3 py-1 text-xs font-medium ${
-                  label === "Sem cobertura"
-                    ? "bg-red-50 text-red-700"
-                    : label === "CEP inválido"
-                      ? "bg-slate-100 text-slate-500"
-                      : "bg-mcc-light text-mcc-dark"
-                }`}
-              >
-                {label}
-              </span>
-            ),
-          )}
+      {/* Coverage legend */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h3 className="mb-3 text-sm font-semibold text-slate-700">Valores possíveis de cobertura</h3>
+        <div className="flex flex-wrap gap-2">
+          {["Claro", "Claro Promo", "Tim", "Nio", "Tim e Claro", "Tim e Claro Promo", "Nio e Claro", "Nio e Claro Promo", "Tim e Nio", "Claro e Tim e Nio", "Claro Promo e Tim e Nio"].map((v) => (
+            <span key={v} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+              {v}
+            </span>
+          ))}
+          <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-600">Sem cobertura</span>
+          <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-600">CEP inválido</span>
         </div>
       </div>
     </div>
