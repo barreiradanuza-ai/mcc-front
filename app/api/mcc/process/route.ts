@@ -8,7 +8,8 @@ export const maxDuration = 300;
 
 const OPENCEP_CONCURRENCY = 10;
 const WAVALIDATOR_BATCH_SIZE = 100;
-const WAVALIDATOR_CONCURRENCY = 3;
+const WAVALIDATOR_CONCURRENCY = 1;
+const WAVALIDATOR_INTER_BATCH_DELAY_MS = 5000;
 
 const WAVALIDATOR_API_KEY = process.env.WAVALIDATOR_API_KEY ?? "";
 
@@ -114,7 +115,7 @@ async function processWavalidatorBatch(
   for (let attempt = 0; attempt <= WAVALIDATOR_MAX_RETRIES; attempt++) {
     try {
       if (attempt > 0) {
-        const backoff = 2000 * attempt;
+        const backoff = 60000 * attempt;
         console.log(`[wavalidator] ${batchLabel} retry ${attempt}/${WAVALIDATOR_MAX_RETRIES} após ${backoff}ms`);
         await new Promise((r) => setTimeout(r, backoff));
       }
@@ -127,8 +128,9 @@ async function processWavalidatorBatch(
       }
 
       if (res.status === 429) {
-        console.warn(`[wavalidator] ${batchLabel} rate limited (429)`);
+        console.warn(`[wavalidator] ${batchLabel} rate limited (429) - aguardando 60s antes de retry`);
         lastError = new Error("Rate limited");
+        await new Promise((r) => setTimeout(r, 60000));
         continue;
       }
 
@@ -193,6 +195,11 @@ async function checkWhatsAppBatch(phones: string[], onProgress?: ProgressFn): Pr
         if (outcome.creditsRemaining !== null) creditsRemaining = outcome.creditsRemaining;
         processedPhones += batch.length;
         onProgress?.(processedPhones, phones.length);
+        // Delay entre lotes para evitar rate limit
+        if (myIdx < totalBatches - 1) {
+          console.log(`[wavalidator] Aguardando ${WAVALIDATOR_INTER_BATCH_DELAY_MS}ms antes do próximo lote...`);
+          await new Promise((r) => setTimeout(r, WAVALIDATOR_INTER_BATCH_DELAY_MS));
+        }
       } catch (err) {
         firstFailure = err;
         return;
