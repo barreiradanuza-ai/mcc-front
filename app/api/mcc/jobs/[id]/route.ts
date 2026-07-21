@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getJob } from "@/lib/mcc/jobStore";
+import { ensureMccSession } from "@/lib/mcc/authz";
 
 export const runtime = "nodejs";
 
@@ -7,6 +8,9 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const { error } = await ensureMccSession();
+  if (error) return error;
+
   const { id } = await params;
   const job = getJob(id);
 
