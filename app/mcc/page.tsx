@@ -163,7 +163,7 @@ export default function MccDashboard() {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await fetch("/api/mcc/jobs", {
+      const res = await fetch("/api/mcc", {
         method: "POST",
         body: formData,
       });
@@ -308,7 +308,7 @@ export default function MccDashboard() {
                   {progressTotal > 0 && (
                     <div className="flex flex-col gap-1.5">
                       <div className="flex justify-between text-xs text-blue-600">
-                        <span>{progressChecked} / {progressTotal} números verificados</span>
+                        <span>{progressChecked} / {progressTotal} linhas processadas</span>
                         <span>{progressPercent}%</span>
                       </div>
                       <div className="h-2 w-full overflow-hidden rounded-full bg-blue-200">
@@ -372,8 +372,6 @@ export default function MccDashboard() {
                   { label: "Com cobertura", value: result.withCoverage, Icon: CheckCircle2, color: "text-emerald-600", bg: "bg-emerald-50" },
                   { label: "Sem cobertura", value: result.withoutCoverage, Icon: XCircle, color: "text-red-600", bg: "bg-red-50" },
                   { label: "CPFs duplicados", value: result.skippedCpfs, Icon: UserX, color: "text-amber-600", bg: "bg-amber-50" },
-                  { label: "Número incorreto", value: result.incorrectNumber, Icon: Phone, color: "text-purple-600", bg: "bg-purple-50" },
-                  { label: "Sem WhatsApp", value: result.withoutWhatsApp, Icon: MessageCircleOff, color: "text-purple-600", bg: "bg-purple-50" },
                   { label: "CEP inválido", value: result.invalid, Icon: AlertTriangle, color: "text-slate-600", bg: "bg-slate-50" },
                 ] as const).map((s) => (
                   <Card key={s.label} className="gap-0 py-3">
@@ -392,54 +390,33 @@ export default function MccDashboard() {
                 ))}
               </div>
 
-              {/* Credits info removed */}
-
-              {/* Success + Download */}
-              <div className="flex flex-col items-center gap-5 rounded-xl border border-emerald-200 bg-gradient-to-b from-emerald-50 to-white p-8">
-                <div className="flex size-14 items-center justify-center rounded-full bg-emerald-100">
-                  <CheckCircle2 className="size-7 text-emerald-600" />
+              {/* Download Section */}
+              <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-emerald-100 bg-emerald-50/50 p-8 text-center">
+                <div className="flex size-16 items-center justify-center rounded-full bg-emerald-100">
+                  <CheckCircle2 className="size-8 text-emerald-600" />
                 </div>
-                <div className="text-center">
-                  <p className="text-lg font-semibold text-slate-800">Planilha processada com sucesso</p>
-                  <p className="mt-1 text-sm text-slate-500">{result.filename}</p>
-                  <p className="mt-1 text-xs text-slate-400">
-                    Processado em{" "}
-                    {result.elapsedMs >= 1000
-                      ? `${(result.elapsedMs / 1000).toFixed(1)}s`
-                      : `${result.elapsedMs}ms`}
+                <div>
+                  <h3 className="text-lg font-bold text-emerald-900">Processamento Concluído!</h3>
+                  <p className="mt-1 text-sm text-emerald-700">
+                    A planilha processada com as informações de cobertura está pronta para download.
                   </p>
                 </div>
-
                 <div className="flex gap-3">
                   <Button
                     onClick={handleDownload}
-                    className="h-11 bg-emerald-600 px-6 text-sm font-semibold hover:bg-emerald-700"
+                    className="h-11 bg-emerald-600 px-8 font-semibold hover:bg-emerald-700"
                   >
-                    <Download className="size-4" />
-                    Baixar planilha
+                    <Download className="mr-2 size-4" />
+                    Baixar Planilha Processada
                   </Button>
-                  <Button variant="outline" className="h-11" onClick={handleReset}>
-                    <RotateCcw className="size-4" />
-                    Nova planilha
+                  <Button variant="outline" className="h-11 border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50" onClick={handleReset}>
+                    <RotateCcw className="mr-2 size-4" />
+                    Novo Processamento
                   </Button>
                 </div>
               </div>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Coverage legend */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h3 className="mb-3 text-sm font-semibold text-slate-700">Valores possíveis de cobertura</h3>
-        <div className="flex flex-wrap gap-2">
-          {["Claro", "Claro Promo", "Tim", "Nio", "Tim e Claro", "Tim e Claro Promo", "Nio e Claro", "Nio e Claro Promo", "Tim e Nio", "Claro e Tim e Nio", "Claro Promo e Tim e Nio"].map((v) => (
-            <span key={v} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-              {v}
-            </span>
-          ))}
-          <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-600">Sem cobertura</span>
-          <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-600">CEP inválido</span>
         </div>
       </div>
     </div>
