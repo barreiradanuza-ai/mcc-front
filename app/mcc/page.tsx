@@ -15,6 +15,8 @@ import {
   RotateCcw,
   TableProperties,
   UserX,
+  PhoneOff,
+  MessageSquareOff,
   Clock,
 } from "lucide-react";
 
@@ -23,6 +25,7 @@ interface ProcessResult {
   withCoverage: number;
   withoutCoverage: number;
   incorrectNumber: number;
+  withoutWhatsApp: number;
   invalid: number;
   skippedCpfs: number;
   newCpfsSaved: number;
@@ -98,6 +101,8 @@ export default function MccDashboard() {
 
       if (data.status === "done") {
         stopTimers();
+        // Créditos da CheckNumber.ai são debitados na criação da task — atualiza o saldo no header.
+        window.dispatchEvent(new Event("checknumber:balance-updated"));
         // Download the file
         const downloadRes = await fetch(`/api/mcc/jobs/${jobId}/download`);
         if (!downloadRes.ok) {
@@ -114,6 +119,7 @@ export default function MccDashboard() {
           withCoverage: stats.withCoverage,
           withoutCoverage: stats.withoutCoverage,
           incorrectNumber: stats.incorrectNumber,
+          withoutWhatsApp: stats.withoutWhatsApp,
           invalid: stats.invalid,
           skippedCpfs: stats.skippedCpfs,
           newCpfsSaved: stats.newCpfsSaved,
@@ -125,6 +131,7 @@ export default function MccDashboard() {
         setProgressMsg("");
       } else if (data.status === "error") {
         stopTimers();
+        window.dispatchEvent(new Event("checknumber:balance-updated"));
         setError(data.errorMessage ?? "Erro ao processar planilha");
         setLoading(false);
       } else {
@@ -228,7 +235,8 @@ export default function MccDashboard() {
         <div className="border-b border-slate-100 bg-slate-50/50 px-8 py-5">
           <h2 className="font-semibold text-slate-800">Upload de planilha</h2>
           <p className="mt-1 text-sm text-slate-500">
-            A planilha deve ter colunas &quot;CEP&quot;, &quot;CPF&quot; e &quot;CONTATO&quot;.
+            A planilha deve ter colunas &quot;CEP&quot; e &quot;CPF&quot;. Se houver uma coluna &quot;CONTATO&quot;,
+            os números serão validados no WhatsApp antes da checagem de cobertura.
             CPFs já processados serão removidos e uma coluna &quot;Cobertura&quot; será adicionada.
           </p>
         </div>
@@ -366,6 +374,8 @@ export default function MccDashboard() {
                   { label: "Total linhas", value: result.total, Icon: FileSpreadsheet, color: "text-slate-600", bg: "bg-slate-50" },
                   { label: "Com cobertura", value: result.withCoverage, Icon: CheckCircle2, color: "text-emerald-600", bg: "bg-emerald-50" },
                   { label: "Sem cobertura", value: result.withoutCoverage, Icon: XCircle, color: "text-red-600", bg: "bg-red-50" },
+                  { label: "Sem WhatsApp", value: result.withoutWhatsApp, Icon: MessageSquareOff, color: "text-orange-600", bg: "bg-orange-50" },
+                  { label: "Número incorreto", value: result.incorrectNumber, Icon: PhoneOff, color: "text-orange-600", bg: "bg-orange-50" },
                   { label: "CPFs duplicados", value: result.skippedCpfs, Icon: UserX, color: "text-amber-600", bg: "bg-amber-50" },
                   { label: "CEP inválido", value: result.invalid, Icon: AlertTriangle, color: "text-slate-600", bg: "bg-slate-50" },
                 ] as const).map((s) => (

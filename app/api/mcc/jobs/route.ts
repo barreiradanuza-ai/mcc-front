@@ -2,73 +2,21 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { prisma } from "@/lib/db";
-import { normalizeCpf } from "@/lib/mcc/admin";
+import { normalizeCpf, normalizeCep } from "@/lib/mcc/admin";
+import { buildCoverageString, resolveClaroPromoCeps } from "@/lib/mcc/coverage";
+import { normalizePhone, checkWhatsAppBulk } from "@/lib/mcc/validators/whatsappChecker";
 import { createJob, updateJob } from "@/lib/mcc/jobStore";
+import { ensureMccSession } from "@/lib/mcc/authz";
 import { randomUUID } from "crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 30; // Only for receiving the file, not processing
 
-const OPENCEP_CONCURRENCY = 10;
-
-function normalizeCep(raw: unknown): string | null {
-  if (raw == null) return null;
-  const digits = String(raw).replace(/\D/g, "");
-  if (digits.length === 0) return null;
-  const padded = digits.padStart(8, "0");
-  if (padded.length !== 8) return null;
-  return padded;
-}
-
-function normalizeCity(text: string): string {
-  return text.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-}
-
-async function fetchCity(cep: string): Promise<string> {
-  try {
-    const res = await fetch(`https://opencep.com/v1/${cep}`, {
-      headers: { "User-Agent": "mcc-front/1.0" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return "";
-    const data = await res.json();
-    return data?.localidade ?? "";
-  } catch {
-    return "";
-  }
-}
-
-async function resolveInBatches<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let idx = 0;
-  async function worker() {
-    while (idx < items.length) {
-      const i = idx++;
-      results[i] = await fn(items[i]);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
-  return results;
-}
-
-function buildCoverageString(hasClaro: boolean, claroPromo: boolean, hasTim: boolean, hasNio: boolean): string {
-  const claroLabel = claroPromo ? "Claro Promo" : "Claro";
-  const hasAnyClaro = hasClaro || claroPromo;
-  if (hasAnyClaro && hasTim && hasNio) return `${claroLabel} e Tim e Nio`;
-  if (hasAnyClaro && hasTim) return `Tim e ${claroLabel}`;
-  if (hasAnyClaro && hasNio) return `Nio e ${claroLabel}`;
-  if (hasTim && hasNio) return "Tim e Nio";
-  if (hasAnyClaro) return claroLabel;
-  if (hasTim) return "Tim";
-  if (hasNio) return "Nio";
-  return "Sem cobertura";
-}
-
 async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], headers: string[], filename: string) {
   const t0 = performance.now();
   const cepCol = headers.find((h) => h.toLowerCase().trim() === "cep")!;
   const cpfCol = headers.find((h) => h.toLowerCase().trim() === "cpf")!;
-  const contatoCol = headers.find((h) => h.toLowerCase().trim() === "contato"); // Make optional
+  const contatoCol = headers.find((h) => h.toLowerCase().trim() === "contato"); // Optional
 
   try {
     updateJob(jobId, { status: "processing", progressMsg: "Verificando CPFs duplicados..." });
@@ -98,13 +46,49 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
 
     updateJob(jobId, { progressMsg: `${skippedCpfs} CPFs duplicados removidos. ${filteredIndices.length} linhas para processar.` });
 
-    // No WhatsApp check needed anymore, all filtered rows are considered valid for contact
-    const whatsappValidIndices = filteredIndices;
-    let incorrectNumber = 0; // No phone validation
-    let withoutWhatsApp = 0; // No WhatsApp validation
-    let creditsRemaining: number | null = null;
+    // --- Phone / WhatsApp validation ---------------------------------------
+    // Only runs when the sheet actually has a CONTATO column; sheets without
+    // it skip straight to coverage (same as before this step existed).
+    const normalizedPhones = filteredIndices.map((i) => (contatoCol ? normalizePhone(rows[i][contatoCol]) : null));
 
-    updateJob(jobId, { progressMsg: "Verificando cobertura por CEP..." });
+    let incorrectNumber = 0;
+    let withoutWhatsApp = 0;
+    let whatsappValidIndices: number[];
+
+    if (contatoCol) {
+      const phoneValidLocalIdx: number[] = [];
+      for (let li = 0; li < filteredIndices.length; li++) {
+        if (normalizedPhones[li] === null) {
+          incorrectNumber++;
+        } else {
+          phoneValidLocalIdx.push(li);
+        }
+      }
+
+      const uniquePhones = [...new Set(phoneValidLocalIdx.map((li) => normalizedPhones[li] as string))];
+
+      updateJob(jobId, {
+        progressMsg: `Verificando ${uniquePhones.length} números no WhatsApp...`,
+        progressChecked: 0,
+        progressTotal: uniquePhones.length,
+      });
+
+      const { existsSet: whatsappSet } = await checkWhatsAppBulk(uniquePhones, (checked, total) => {
+        updateJob(jobId, {
+          progressMsg: `WhatsApp: ${checked}/${total} números verificados`,
+          progressChecked: checked,
+          progressTotal: total,
+        });
+      });
+
+      const whatsappValidLocalIdx = phoneValidLocalIdx.filter((li) => whatsappSet.has(normalizedPhones[li] as string));
+      withoutWhatsApp = phoneValidLocalIdx.length - whatsappValidLocalIdx.length;
+      whatsappValidIndices = whatsappValidLocalIdx.map((li) => filteredIndices[li]);
+    } else {
+      whatsappValidIndices = filteredIndices;
+    }
+
+    updateJob(jobId, { progressMsg: "Verificando cobertura por CEP...", progressChecked: 0, progressTotal: 0 });
 
     const allFilteredCeps = filteredIndices.map((i) => normalizeCep(rows[i][cepCol]));
     const validCeps = [...new Set(allFilteredCeps.filter((c): c is string => c !== null))];
@@ -120,31 +104,13 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
     const nioSet = new Set(nioResults.map((r: { cep: string }) => r.cep.trim()));
 
     const claroCeps = validCeps.filter((c) => claroSet.has(c));
-    const cityMap = new Map<string, string>();
-
-    if (claroCeps.length > 0) {
-      const cities = await resolveInBatches(claroCeps, OPENCEP_CONCURRENCY, async (cep) => {
-        const city = await fetchCity(cep);
-        return { cep, city };
+    const claroPromoCeps = await resolveClaroPromoCeps(claroCeps, async (cities) => {
+      const promoResults = await prisma.cidadePromoClaro.findMany({
+        where: { cidade: { in: cities } },
+        select: { cidade: true },
       });
-      for (const { cep, city } of cities) {
-        if (city) cityMap.set(cep, normalizeCity(city));
-      }
-
-      const uniqueCities = [...new Set(cityMap.values())].filter(Boolean);
-      if (uniqueCities.length > 0) {
-        const promoResults = await prisma.cidadePromoClaro.findMany({
-          where: { cidade: { in: uniqueCities } },
-          select: { cidade: true },
-        });
-        const promoSet = new Set(promoResults.map((r: { cidade: string }) => r.cidade));
-        for (const [cep, city] of cityMap) {
-          if (!promoSet.has(city)) cityMap.delete(cep);
-        }
-      } else {
-        cityMap.clear();
-      }
-    }
+      return new Set(promoResults.map((r: { cidade: string }) => r.cidade));
+    });
 
     function getCoverage(localIdx: number): string {
       const cep = allFilteredCeps[localIdx];
@@ -152,7 +118,7 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
       const hasClaro = claroSet.has(cep);
       const hasTim = timSet.has(cep);
       const hasNio = nioSet.has(cep);
-      const claroPromo = hasClaro && cityMap.has(cep);
+      const claroPromo = claroPromoCeps.has(cep);
       return buildCoverageString(hasClaro, claroPromo, hasTim, hasNio);
     }
 
@@ -172,6 +138,16 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
       const rawContato = contatoCol ? String(rows[origIdx][contatoCol] ?? "").replace(/\D/g, "") || null : null;
       const cep = allFilteredCeps[li];
       const coverage = getCoverage(li);
+
+      if (contatoCol && normalizedPhones[li] === null) {
+        if (cpf) cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: "Número incorreto" });
+        continue;
+      }
+
+      if (!approvedRowIndicesSet.has(origIdx)) {
+        if (cpf) cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: "Sem WhatsApp" });
+        continue;
+      }
 
       if (coverage === "CEP inválido") {
         invalid++;
@@ -227,12 +203,14 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
         total: rows.length,
         withCoverage,
         withoutCoverage,
-        incorrectNumber: 0, // No phone validation
-        withoutWhatsApp: 0, // No WhatsApp validation
+        incorrectNumber,
+        withoutWhatsApp,
         invalid,
         skippedCpfs,
         newCpfsSaved,
         elapsedMs,
+        // Saldo é consultado ao vivo em /api/mcc/admin/checknumber/balance, não por job
+        // (a API de tasks não retorna saldo restante por chamada).
         creditsRemaining: null,
       },
     });
@@ -246,6 +224,9 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
 }
 
 export async function POST(req: Request) {
+  const { error } = await ensureMccSession();
+  if (error) return error;
+
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -272,10 +253,7 @@ export async function POST(req: Request) {
   if (!headers.find((h) => h.toLowerCase().trim() === "cpf")) {
     return NextResponse.json({ error: 'Coluna "CPF" não encontrada na planilha' }, { status: 400 });
   }
-  // Removed strict check for 'CONTATO' column as per user request
-  // if (!headers.find((h) => h.toLowerCase().trim() === "contato")) {
-  //   return NextResponse.json({ error: 'Coluna "CONTATO" não encontrada na planilha' }, { status: 400 });
-  // }
+  // CONTATO é opcional: se ausente, a etapa de validação de WhatsApp é pulada.
 
   const jobId = randomUUID();
   createJob(jobId);
