@@ -125,9 +125,8 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
       }
     }
 
-    // WhatsApp check removed - all valid phones are considered
+    // No WhatsApp check needed anymore
     const whatsappValidIndices = [...phoneValidIndices];
-    const whatsappValidPhoneLocalIdx = [...phoneValidLocalIdx];
     let withoutWhatsApp = 0;
     let creditsRemaining: number | null = null;
 
@@ -203,11 +202,6 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
 
       if (phone === null) {
         if (cpf) cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: "Número incorreto" });
-        continue;
-      }
-
-      if (!approvedRowIndicesSet.has(origIdx)) {
-        if (cpf) cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: "Sem WhatsApp" });
         continue;
       }
 
