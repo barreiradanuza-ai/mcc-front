@@ -9,10 +9,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30; // Only for receiving the file, not processing
 
 const OPENCEP_CONCURRENCY = 10;
-const WAVALIDATOR_BATCH_SIZE = 100;
-const WAVALIDATOR_CONCURRENCY = 1;
-const WAVALIDATOR_INTER_BATCH_DELAY_MS = 3000;
-const WAVALIDATOR_API_KEY = process.env.WAVALIDATOR_API_KEY ?? "";
+// Wavalidator removed
 
 function normalizeCep(raw: unknown): string | null {
   if (raw == null) return null;
@@ -62,61 +59,7 @@ async function resolveInBatches<T, R>(items: T[], concurrency: number, fn: (item
   return results;
 }
 
-async function callWavalidator(batch: string[]): Promise<Response> {
-  return fetch("https://wavalidator.com/api/v1/bulk-check/", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${WAVALIDATOR_API_KEY}`,
-    },
-    body: JSON.stringify({ numbers: batch }),
-    signal: AbortSignal.timeout(180000),
-  });
-}
-
-async function processWavalidatorBatch(batch: string[], batchLabel: string): Promise<{ exists: string[]; creditsRemaining: number | null }> {
-  let lastError: unknown = null;
-  const maxRetries = 3;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      if (attempt > 0) {
-        const backoff = 15000 * attempt;
-        console.log(`[wavalidator] ${batchLabel} retry ${attempt}/${maxRetries} após ${backoff}ms`);
-        await new Promise((r) => setTimeout(r, backoff));
-      }
-
-      const res = await callWavalidator(batch);
-
-      if (res.status === 402) throw new Error("Créditos do Wavalidator esgotados. Recarregue em wavalidator.com/pricing");
-
-      if (res.status === 429) {
-        console.warn(`[wavalidator] ${batchLabel} rate limited (429) - aguardando 20s antes de retry`);
-        lastError = new Error("Rate limited");
-        await new Promise((r) => setTimeout(r, 20000));
-        continue;
-      }
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(`API ${res.status} — ${body.slice(0, 200)}`);
-      }
-
-      const data = await res.json();
-      const creditsRemaining: number | null = data.credits_remaining ?? null;
-      const results: { number: string; exists: boolean }[] = data.results ?? [];
-      const exists = results.filter((r) => r.exists).map((r) => r.number);
-      return { exists, creditsRemaining };
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("Créditos")) throw err;
-      lastError = err;
-      console.error(`[wavalidator] ${batchLabel} tentativa ${attempt + 1} falhou:`, err instanceof Error ? err.message : err);
-    }
-  }
-
-  const msg = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`Falha ao validar números no Wavalidator após ${maxRetries + 1} tentativas (${batchLabel}): ${msg}. Tente novamente em alguns minutos.`);
-}
+// Wavalidator functions removed
 
 function buildCoverageString(hasClaro: boolean, claroPromo: boolean, hasTim: boolean, hasNio: boolean): string {
   const claroLabel = claroPromo ? "Claro Promo" : "Claro";
@@ -131,17 +74,7 @@ function buildCoverageString(hasClaro: boolean, claroPromo: boolean, hasTim: boo
   return "Sem cobertura";
 }
 
-async function saveCredits(credits: number) {
-  try {
-    await prisma.appConfig.upsert({
-      where: { key: "wavalidator_credits" },
-      update: { value: String(credits) },
-      create: { key: "wavalidator_credits", value: String(credits) },
-    });
-  } catch (err) {
-    console.error("[wavalidator] Failed to save credits:", err);
-  }
-}
+// saveCredits removed
 
 async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], headers: string[], filename: string) {
   const t0 = performance.now();
@@ -192,63 +125,11 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
       }
     }
 
-    const uniquePhones = [...new Set(normalizedPhones.filter((p): p is string => p !== null))];
-    const totalWaBatches = Math.ceil(uniquePhones.length / WAVALIDATOR_BATCH_SIZE);
-
-    updateJob(jobId, {
-      progressMsg: `Verificando ${uniquePhones.length} números no WhatsApp (${totalWaBatches} lotes)...`,
-      progressChecked: 0,
-      progressTotal: uniquePhones.length,
-    });
-
-    // Process WhatsApp batches sequentially
-    const existsSet = new Set<string>();
-    let creditsRemaining: number | null = null;
-    const batches: string[][] = [];
-    for (let i = 0; i < uniquePhones.length; i += WAVALIDATOR_BATCH_SIZE) {
-      batches.push(uniquePhones.slice(i, i + WAVALIDATOR_BATCH_SIZE));
-    }
-
-    let processedPhones = 0;
-    for (let bi = 0; bi < batches.length; bi++) {
-      const batch = batches[bi];
-      const label = `Lote ${bi + 1}/${batches.length} (${batch.length} numbers)`;
-      console.log(`[job:${jobId}] [wavalidator] ${label} iniciando`);
-
-      const outcome = await processWavalidatorBatch(batch, label);
-      for (const num of outcome.exists) existsSet.add(num);
-      if (outcome.creditsRemaining !== null) creditsRemaining = outcome.creditsRemaining;
-      processedPhones += batch.length;
-
-      updateJob(jobId, {
-        progressMsg: `WhatsApp: ${processedPhones}/${uniquePhones.length} números verificados (lote ${bi + 1}/${batches.length})`,
-        progressChecked: processedPhones,
-        progressTotal: uniquePhones.length,
-      });
-
-      if (bi < batches.length - 1) {
-        console.log(`[job:${jobId}] Aguardando ${WAVALIDATOR_INTER_BATCH_DELAY_MS}ms antes do próximo lote...`);
-        await new Promise((r) => setTimeout(r, WAVALIDATOR_INTER_BATCH_DELAY_MS));
-      }
-    }
-
-    if (creditsRemaining !== null) await saveCredits(creditsRemaining);
-
+    // WhatsApp check removed - all valid phones are considered
+    const whatsappValidIndices = [...phoneValidIndices];
+    const whatsappValidPhoneLocalIdx = [...phoneValidLocalIdx];
     let withoutWhatsApp = 0;
-    const whatsappValidIndices: number[] = [];
-    const whatsappValidPhoneLocalIdx: number[] = [];
-
-    for (let pi = 0; pi < phoneValidIndices.length; pi++) {
-      const phone = normalizedPhones[phoneValidLocalIdx[pi]];
-      if (phone && existsSet.has(phone)) {
-        whatsappValidIndices.push(phoneValidIndices[pi]);
-        whatsappValidPhoneLocalIdx.push(phoneValidLocalIdx[pi]);
-      } else {
-        withoutWhatsApp++;
-      }
-    }
-
-    console.log(`[job:${jobId}] [whatsapp-check] Resultado: ${whatsappValidIndices.length} com WhatsApp | ${withoutWhatsApp} sem WhatsApp`);
+    let creditsRemaining: number | null = null;
 
     updateJob(jobId, { progressMsg: "Verificando cobertura por CEP..." });
 
