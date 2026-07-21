@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -14,8 +15,6 @@ import {
   RotateCcw,
   TableProperties,
   UserX,
-  Phone,
-  MessageCircleOff,
   Clock,
 } from "lucide-react";
 
@@ -24,14 +23,12 @@ interface ProcessResult {
   withCoverage: number;
   withoutCoverage: number;
   incorrectNumber: number;
-  withoutWhatsApp: number;
   invalid: number;
   skippedCpfs: number;
   newCpfsSaved: number;
   elapsedMs: number;
   downloadUrl: string;
   filename: string;
-  creditsRemaining: number | null;
 }
 
 const POLL_INTERVAL_MS = 3000;
@@ -117,12 +114,10 @@ export default function MccDashboard() {
           withCoverage: stats.withCoverage,
           withoutCoverage: stats.withoutCoverage,
           incorrectNumber: stats.incorrectNumber,
-          withoutWhatsApp: stats.withoutWhatsApp,
           invalid: stats.invalid,
           skippedCpfs: stats.skippedCpfs,
           newCpfsSaved: stats.newCpfsSaved,
           elapsedMs: stats.elapsedMs,
-          creditsRemaining: stats.creditsRemaining ?? null,
           downloadUrl,
           filename: data.resultFilename,
         });
@@ -163,7 +158,7 @@ export default function MccDashboard() {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await fetch("/api/mcc", {
+      const res = await fetch("/api/mcc/jobs", {
         method: "POST",
         body: formData,
       });
@@ -384,7 +379,7 @@ export default function MccDashboard() {
                       </div>
                     </CardHeader>
                     <CardContent>
-                      <p className={`text-2xl font-bold ${s.color}`}>${s.value}</p>
+                      <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
                     </CardContent>
                   </Card>
                 ))}

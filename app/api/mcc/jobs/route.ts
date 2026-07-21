@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { prisma } from "@/lib/db";
@@ -9,7 +10,6 @@ export const runtime = "nodejs";
 export const maxDuration = 30; // Only for receiving the file, not processing
 
 const OPENCEP_CONCURRENCY = 10;
-// Wavalidator removed
 
 function normalizeCep(raw: unknown): string | null {
   if (raw == null) return null;
@@ -18,14 +18,6 @@ function normalizeCep(raw: unknown): string | null {
   const padded = digits.padStart(8, "0");
   if (padded.length !== 8) return null;
   return padded;
-}
-
-function normalizePhone(raw: unknown): string | null {
-  if (raw == null) return null;
-  const digits = String(raw).replace(/\D/g, "");
-  if (digits.startsWith("55") && digits.length >= 12 && digits.length <= 13) return digits;
-  if (digits.length < 10 || digits.length > 11) return null;
-  return `55${digits}`;
 }
 
 function normalizeCity(text: string): string {
@@ -59,8 +51,6 @@ async function resolveInBatches<T, R>(items: T[], concurrency: number, fn: (item
   return results;
 }
 
-// Wavalidator functions removed
-
 function buildCoverageString(hasClaro: boolean, claroPromo: boolean, hasTim: boolean, hasNio: boolean): string {
   const claroLabel = claroPromo ? "Claro Promo" : "Claro";
   const hasAnyClaro = hasClaro || claroPromo;
@@ -74,13 +64,11 @@ function buildCoverageString(hasClaro: boolean, claroPromo: boolean, hasTim: boo
   return "Sem cobertura";
 }
 
-// saveCredits removed
-
 async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], headers: string[], filename: string) {
   const t0 = performance.now();
   const cepCol = headers.find((h) => h.toLowerCase().trim() === "cep")!;
   const cpfCol = headers.find((h) => h.toLowerCase().trim() === "cpf")!;
-  const contatoCol = headers.find((h) => h.toLowerCase().trim() === "contato")!;
+  const contatoCol = headers.find((h) => h.toLowerCase().trim() === "contato"); // Make optional
 
   try {
     updateJob(jobId, { status: "processing", progressMsg: "Verificando CPFs duplicados..." });
@@ -110,24 +98,10 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
 
     updateJob(jobId, { progressMsg: `${skippedCpfs} CPFs duplicados removidos. ${filteredIndices.length} linhas para processar.` });
 
-    const normalizedPhones = filteredIndices.map((i) => normalizePhone(rows[i][contatoCol]));
-
-    let incorrectNumber = 0;
-    const phoneValidIndices: number[] = [];
-    const phoneValidLocalIdx: number[] = [];
-
-    for (let li = 0; li < filteredIndices.length; li++) {
-      if (normalizedPhones[li] === null) {
-        incorrectNumber++;
-      } else {
-        phoneValidIndices.push(filteredIndices[li]);
-        phoneValidLocalIdx.push(li);
-      }
-    }
-
-    // No WhatsApp check needed anymore
-    const whatsappValidIndices = [...phoneValidIndices];
-    let withoutWhatsApp = 0;
+    // No WhatsApp check needed anymore, all filtered rows are considered valid for contact
+    const whatsappValidIndices = filteredIndices;
+    let incorrectNumber = 0; // No phone validation
+    let withoutWhatsApp = 0; // No WhatsApp validation
     let creditsRemaining: number | null = null;
 
     updateJob(jobId, { progressMsg: "Verificando cobertura por CEP..." });
@@ -195,15 +169,9 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
     for (let li = 0; li < filteredIndices.length; li++) {
       const origIdx = filteredIndices[li];
       const cpf = normalizedCpfs[origIdx];
-      const phone = normalizedPhones[li];
+      const rawContato = contatoCol ? String(rows[origIdx][contatoCol] ?? "").replace(/\D/g, "") || null : null;
       const cep = allFilteredCeps[li];
-      const rawContato = String(rows[origIdx][contatoCol] ?? "").replace(/\D/g, "") || null;
       const coverage = getCoverage(li);
-
-      if (phone === null) {
-        if (cpf) cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: "Número incorreto" });
-        continue;
-      }
 
       if (coverage === "CEP inválido") {
         invalid++;
@@ -259,13 +227,13 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
         total: rows.length,
         withCoverage,
         withoutCoverage,
-        incorrectNumber,
-        withoutWhatsApp,
+        incorrectNumber: 0, // No phone validation
+        withoutWhatsApp: 0, // No WhatsApp validation
         invalid,
         skippedCpfs,
         newCpfsSaved,
         elapsedMs,
-        creditsRemaining,
+        creditsRemaining: null,
       },
     });
 
@@ -304,9 +272,10 @@ export async function POST(req: Request) {
   if (!headers.find((h) => h.toLowerCase().trim() === "cpf")) {
     return NextResponse.json({ error: 'Coluna "CPF" não encontrada na planilha' }, { status: 400 });
   }
-  if (!headers.find((h) => h.toLowerCase().trim() === "contato")) {
-    return NextResponse.json({ error: 'Coluna "CONTATO" não encontrada na planilha' }, { status: 400 });
-  }
+  // Removed strict check for 'CONTATO' column as per user request
+  // if (!headers.find((h) => h.toLowerCase().trim() === "contato")) {
+  //   return NextResponse.json({ error: 'Coluna "CONTATO" não encontrada na planilha' }, { status: 400 });
+  // }
 
   const jobId = randomUUID();
   createJob(jobId);

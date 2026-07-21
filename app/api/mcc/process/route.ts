@@ -7,7 +7,6 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const OPENCEP_CONCURRENCY = 10;
-// Wavalidator constants removed
 
 function normalizeCep(raw: unknown): string | null {
   if (raw == null) return null;
@@ -16,22 +15,6 @@ function normalizeCep(raw: unknown): string | null {
   const padded = digits.padStart(8, "0");
   if (padded.length !== 8) return null;
   return padded;
-}
-
-function normalizePhone(raw: unknown): string | null {
-  if (raw == null) return null;
-
-  const digits = String(raw).replace(/\D/g, "");
-
-  if (digits.startsWith("55") && digits.length >= 12 && digits.length <= 13) {
-    return digits;
-  }
-
-  if (digits.length < 10 || digits.length > 11) {
-    return null;
-  }
-
-  return `55${digits}`;
 }
 
 function normalizeCity(text: string): string {
@@ -74,15 +57,6 @@ async function resolveInBatches<T, R>(
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
   return results;
 }
-
-type ProgressFn = (checked: number, total: number) => void;
-
-interface WhatsAppResult {
-  existsSet: Set<string>;
-  creditsRemaining: number | null;
-}
-
-// Wavalidator functions removed
 
 function buildCoverageString(hasClaro: boolean, claroPromo: boolean, hasTim: boolean, hasNio: boolean): string {
   const claroLabel = claroPromo ? "Claro Promo" : "Claro";
@@ -135,10 +109,7 @@ export async function POST(req: Request) {
   if (!cpfCol) {
     return NextResponse.json({ error: 'Coluna "CPF" não encontrada na planilha' }, { status: 400 });
   }
-  const contatoCol = headers.find((h) => h.toLowerCase().trim() === "contato");
-  if (!contatoCol) {
-    return NextResponse.json({ error: 'Coluna "CONTATO" não encontrada na planilha' }, { status: 400 });
-  }
+  const contatoCol = headers.find((h) => h.toLowerCase().trim() === "contato"); // Make optional
 
   const encoder = new TextEncoder();
   const stream = new TransformStream();
@@ -163,57 +134,24 @@ export async function POST(req: Request) {
         existingCpfSet = new Set(existing.map((r) => r.cpf));
       }
 
-      const filteredIndices: number[] = [];
       let skippedCpfs = 0;
-      for (let i = 0; i < rows.length; i++) {
-        const cpf = normalizedCpfs[i];
-        if (cpf && existingCpfSet.has(cpf)) {
-          skippedCpfs++;
-        } else {
-          filteredIndices.push(i);
-        }
-      }
-
-      await send({ type: "progress", step: "cpf", message: `${skippedCpfs} CPFs duplicados removidos. ${filteredIndices.length} linhas para processar.` });
-
-      const normalizedPhones = filteredIndices.map((i) => normalizePhone(rows[i][contatoCol]));
-
-      let incorrectNumber = 0;
-      const phoneValidIndices: number[] = [];
-      const phoneValidLocalIdx: number[] = [];
-
-      for (let li = 0; li < filteredIndices.length; li++) {
-        if (normalizedPhones[li] === null) {
-          incorrectNumber++;
-        } else {
-          phoneValidIndices.push(filteredIndices[li]);
-          phoneValidLocalIdx.push(li);
-        }
-      }
-
-      console.log(`[phone-validation] Resultado: ${phoneValidIndices.length} válidos | ${incorrectNumber} inválidos (de ${filteredIndices.length} total)`);
-
-
-      // WhatsApp check removed
-      const whatsappValidIndices = [...phoneValidIndices];
-      const whatsappValidPhoneLocalIdx = [...phoneValidLocalIdx];
-      let withoutWhatsApp = 0;
-      let creditsRemaining: number | null = null;
+      const cpfsToSave: { cpf: string; cep: string | null; contato: string | null; cobertura: string; motivoRecusa: string | null }[] = [];
+      const outputRows: Record<string, unknown>[] = [];
 
       await send({ type: "progress", step: "coverage", message: "Verificando cobertura por CEP..." });
 
-      const allFilteredCeps = filteredIndices.map((i) => normalizeCep(rows[i][cepCol]));
-      const validCeps = [...new Set(allFilteredCeps.filter((c): c is string => c !== null))];
+      const allCeps = rows.map((r) => normalizeCep(r[cepCol]));
+      const uniqueCeps = [...new Set(allCeps.filter((c): c is string => c !== null))];
 
       const [claroResults, timResults, nioResults] = await Promise.all([
-        validCeps.length > 0
-          ? prisma.cepClaro.findMany({ where: { cep: { in: validCeps } }, select: { cep: true } })
+        uniqueCeps.length > 0
+          ? prisma.cepClaro.findMany({ where: { cep: { in: uniqueCeps } }, select: { cep: true } })
           : [],
-        validCeps.length > 0
-          ? prisma.cepTim.findMany({ where: { cep: { in: validCeps } }, select: { cep: true } })
+        uniqueCeps.length > 0
+          ? prisma.cepTim.findMany({ where: { cep: { in: uniqueCeps } }, select: { cep: true } })
           : [],
-        validCeps.length > 0
-          ? prisma.cepNio.findMany({ where: { cep: { in: validCeps } }, select: { cep: true } })
+        uniqueCeps.length > 0
+          ? prisma.cepNio.findMany({ where: { cep: { in: uniqueCeps } }, select: { cep: true } })
           : [],
       ]);
 
@@ -221,7 +159,7 @@ export async function POST(req: Request) {
       const timSet = new Set(timResults.map((r: { cep: string }) => r.cep.trim()));
       const nioSet = new Set(nioResults.map((r: { cep: string }) => r.cep.trim()));
 
-      const claroCeps = validCeps.filter((c) => claroSet.has(c));
+      const claroCeps = uniqueCeps.filter((c) => claroSet.has(c));
       const cityMap = new Map<string, string>();
 
       if (claroCeps.length > 0) {
@@ -249,8 +187,7 @@ export async function POST(req: Request) {
         }
       }
 
-      function getCoverage(localIdx: number): string {
-        const cep = allFilteredCeps[localIdx];
+      function getCoverage(cep: string | null): string {
         if (!cep) return "CEP inválido";
         const hasClaro = claroSet.has(cep);
         const hasTim = timSet.has(cep);
@@ -261,55 +198,40 @@ export async function POST(req: Request) {
 
       await send({ type: "progress", step: "build", message: "Montando planilha de saída..." });
 
-      const approvedRowIndicesSet = new Set(whatsappValidIndices);
-      const cpfsToSave: { cpf: string; cep: string | null; contato: string | null; cobertura: string; motivoRecusa: string | null }[] = [];
-
       let withCoverage = 0;
       let withoutCoverage = 0;
       let invalid = 0;
-      const outputRows: Record<string, unknown>[] = [];
 
-      for (let li = 0; li < filteredIndices.length; li++) {
-        const origIdx = filteredIndices[li];
-        const cpf = normalizedCpfs[origIdx];
-        const phone = normalizedPhones[li];
-        const cep = allFilteredCeps[li];
-        const rawContato = String(rows[origIdx][contatoCol] ?? "").replace(/\D/g, "") || null;
-        const coverage = getCoverage(li);
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const cpf = normalizedCpfs[i];
+        const cep = normalizeCep(row[cepCol]);
+        const rawContato = contatoCol ? String(row[contatoCol] ?? "").replace(/\D/g, "") || null : null;
 
-        if (phone === null) {
-          if (cpf) {
-            cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: "Número incorreto" });
+        let coverage = "";
+        let motivoRecusa: string | null = null;
+
+        if (cpf && existingCpfSet.has(cpf)) {
+          coverage = "CPF Duplicado";
+          motivoRecusa = "CPF Duplicado";
+          skippedCpfs++;
+        } else {
+          coverage = getCoverage(cep);
+          if (coverage === "CEP inválido") {
+            invalid++;
+            motivoRecusa = "CEP inválido";
+          } else if (coverage === "Sem cobertura") {
+            withoutCoverage++;
+            motivoRecusa = "Sem cobertura";
+          } else {
+            withCoverage++;
           }
-          continue;
-        }
 
-        if (!approvedRowIndicesSet.has(origIdx)) {
           if (cpf) {
-            cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: "Sem WhatsApp" });
+            cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa });
           }
-          continue;
         }
-
-        if (coverage === "CEP inválido") {
-          invalid++;
-          outputRows.push({ ...rows[origIdx], Cobertura: coverage });
-          continue;
-        }
-
-        if (coverage === "Sem cobertura") {
-          withoutCoverage++;
-          if (cpf) {
-            cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: "Sem cobertura" });
-          }
-          continue;
-        }
-
-        withCoverage++;
-        outputRows.push({ ...rows[origIdx], Cobertura: coverage });
-        if (cpf) {
-          cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: null });
-        }
+        outputRows.push({ ...row, Cobertura: coverage });
       }
 
       await send({ type: "progress", step: "save", message: "Salvando registros no banco..." });
@@ -357,13 +279,13 @@ export async function POST(req: Request) {
         total: rows.length,
         withCoverage,
         withoutCoverage,
-        incorrectNumber,
-        withoutWhatsApp,
+        incorrectNumber: 0, // No phone validation
+        withoutWhatsApp: 0, // No WhatsApp validation
         invalid,
         skippedCpfs,
         newCpfsSaved,
         elapsedMs,
-        creditsRemaining,
+        creditsRemaining: null,
       });
     } catch (err) {
       console.error("[process] Error:", err);
