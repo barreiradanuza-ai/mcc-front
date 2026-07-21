@@ -1,6 +1,6 @@
 import { auth, signOut } from "@/auth";
 import { AdminSidebar } from "@/components/mcc/admin-sidebar";
-import { WavalidatorCredits } from "@/components/mcc/wavalidator-credits";
+// WavalidatorCredits removed
 import { Button } from "@/components/ui/button";
 import { LogOut, Wifi, Shield } from "lucide-react";
 
@@ -28,7 +28,6 @@ export default async function MccLayout({
           </a>
 
           <div className="flex items-center gap-3">
-            <WavalidatorCredits />
             <div className="hidden items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 sm:flex">
               <Shield className="size-3.5 text-mcc-blue" />
               <span className="text-xs font-medium text-slate-600">
