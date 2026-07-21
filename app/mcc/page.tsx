@@ -16,8 +16,6 @@ import {
   UserX,
   Phone,
   MessageCircleOff,
-  Wallet,
-  ExternalLink,
   Clock,
 } from "lucide-react";
 
@@ -112,8 +110,6 @@ export default function MccDashboard() {
         }
         const blob = await downloadRes.blob();
         const downloadUrl = URL.createObjectURL(blob);
-
-        window.dispatchEvent(new Event("wavalidator:credits-updated"));
 
         const stats = data.resultStats;
         setResult({
@@ -390,30 +386,13 @@ export default function MccDashboard() {
                       </div>
                     </CardHeader>
                     <CardContent>
-                      <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+                      <p className={`text-2xl font-bold ${s.color}`}>${s.value}</p>
                     </CardContent>
                   </Card>
                 ))}
               </div>
 
-              {/* Credits info */}
-              {result.creditsRemaining !== null && (
-                <a
-                  href="https://wavalidator.com/pricing"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-5 py-3 transition-colors hover:bg-amber-100"
-                >
-                  <Wallet className="size-5 text-amber-600" />
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-amber-800">
-                      {result.creditsRemaining.toLocaleString("pt-BR")} créditos restantes
-                    </p>
-                    <p className="text-xs text-amber-600">Clique para recarregar no Wavalidator</p>
-                  </div>
-                  <ExternalLink className="size-4 text-amber-400" />
-                </a>
-              )}
+              {/* Credits info removed */}
 
               {/* Success + Download */}
               <div className="flex flex-col items-center gap-5 rounded-xl border border-emerald-200 bg-gradient-to-b from-emerald-50 to-white p-8">
