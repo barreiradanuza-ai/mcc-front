@@ -9,7 +9,7 @@ const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  const email = "barreiradanuza@gmail.com";
+  const email = "danuza@minhacasaconectada.net.br";
   const password = "Danuza@26";
   const name = "Danuza Barreira";
 
