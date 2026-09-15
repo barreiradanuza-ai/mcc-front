@@ -5,6 +5,7 @@ import { ensureMccSession } from "@/lib/mcc/authz";
 import { getResourceConfig, normalizeValue } from "@/lib/mcc/admin";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getDelegate(resource: string): any {
@@ -24,8 +25,9 @@ function getDelegate(resource: string): any {
 
 function parseCsvValues(content: string): string[] {
   return content
+    .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
-    .map((line) => line.split(/[;,]/)[0]?.trim())
+    .map((line) => line.split(/[;,]/)[0]?.replace(/^"|"$/g, "").trim())
     .filter((line): line is string => Boolean(line));
 }
 
@@ -53,7 +55,7 @@ async function createInChunks(
 ) {
   if (!delegate) return 0;
   let inserted = 0;
-  const chunkSize = 1000;
+  const chunkSize = 10000;
 
   for (let i = 0; i < values.length; i += chunkSize) {
     const chunk = values.slice(i, i + chunkSize);
@@ -118,7 +120,17 @@ export async function POST(
     return NextResponse.json({ error: "Nenhum registro válido encontrado" }, { status: 400 });
   }
 
-  const inserted = await createInChunks(delegate, config.column, uniqueValid);
+  let inserted: number;
+  try {
+    inserted = await createInChunks(delegate, config.column, uniqueValid);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`[admin-import] ${resource} failed:`, error);
+    return NextResponse.json(
+      { error: `Falha ao gravar os registros no banco: ${detail.slice(0, 500)}` },
+      { status: 500 },
+    );
+  }
   const ignored = uniqueValid.length - inserted;
 
   return NextResponse.json({
