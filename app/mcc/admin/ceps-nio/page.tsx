@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, Loader2, Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AdminResourcePage } from "@/components/mcc/admin-resource-page";
 
-type Job = { id: string; status: string; phase: string; collected: number; valid: boolean; problems: string[]; created_at?: string };
+type Job = { id: string; status: string; phase: string; collected: number; valid: boolean; problems: string[]; progress?: { state?: string; current?: number; total?: number; municipality?: string; collected?: number }; created_at?: string };
 
 async function api(path: string, init?: RequestInit) {
   const res = await fetch(`/api/mcc/admin/ceps-nio/export/${path}`, { ...init, cache: "no-store" });
@@ -68,9 +69,11 @@ export default function AdminCepsNioPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center gap-3"><div className="rounded-full bg-slate-100 p-2">{active ? <Loader2 className="size-5 animate-spin text-mcc-blue" /> : completed && job.valid ? <CheckCircle2 className="size-5 text-emerald-600" /> : <AlertTriangle className="size-5 text-amber-600" />}</div><div><h2 className="font-semibold text-slate-900">{job ? job.phase : "Nenhuma extração iniciada"}</h2><p className="text-sm text-slate-500">{job ? `${job.collected.toLocaleString("pt-BR")} CEPs coletados · status: ${job.status}` : "Clique em iniciar para criar um job."}</p></div></div>
         {job?.problems?.length ? <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-semibold text-amber-900">CSV provisório — revisão necessária</p><p className="mt-1 text-sm text-amber-800">O arquivo pode ser baixado para conferência, mas não deve ser importado como cobertura nacional definitiva.</p><ul className="mt-2 list-disc pl-5 text-sm text-amber-800">{job.problems.map((p) => <li key={p}>{p}</li>)}</ul></div> : null}
+        {job?.progress?.state && <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center justify-between text-sm"><span className="font-semibold text-slate-700">Progresso: {job.progress.state}</span><span className="text-slate-500">{job.progress.current ?? 0} de {job.progress.total ?? 0}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-mcc-blue transition-all" style={{ width: `${Math.min(100, ((job.progress.current ?? 0) / Math.max(1, job.progress.total ?? 1)) * 100)}%` }} /></div><p className="mt-2 text-xs text-slate-500">Município: {job.progress.municipality ?? "—"} · CEPs do estado: {(job.progress.collected ?? 0).toLocaleString("pt-BR")}</p></div>}
         {completed && <div className="mt-5 flex flex-wrap gap-3"><Button onClick={() => download("csv")}><Download className="size-4" />{job.valid ? "Baixar CSV validado" : "Baixar CSV provisório"}</Button><Button variant="outline" onClick={() => download("audit")}><Download className="size-4" />Baixar auditoria</Button></div>}
       </div>
       <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 text-sm leading-6 text-blue-900"><strong>Regra de segurança:</strong> um estado que retorna 29.998/29.999 CEPs sem confirmação de paginação é considerado inconclusivo. O CSV nacional não será liberado como completo nesse caso.</div>
+      <AdminResourcePage resource="ceps-nio" />
     </div>
   );
 }
