@@ -103,8 +103,8 @@ export async function POST(
     return NextResponse.json({ error: "Arquivo sem dados" }, { status: 400 });
   }
 
-  if (rawValues.length > 100000) {
-    return NextResponse.json({ error: "Arquivo excede limite de 100.000 linhas" }, { status: 400 });
+  if (rawValues.length > 500000) {
+    return NextResponse.json({ error: "Arquivo excede limite de 500.000 linhas" }, { status: 400 });
   }
 
   const uniqueValid = [
