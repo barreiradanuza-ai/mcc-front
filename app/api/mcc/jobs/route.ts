@@ -136,16 +136,20 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
       const origIdx = filteredIndices[li];
       const cpf = normalizedCpfs[origIdx];
       const rawContato = contatoCol ? String(rows[origIdx][contatoCol] ?? "").replace(/\D/g, "") || null : null;
+      // cpfs_cobertura.contato is VARCHAR(13). Invalid spreadsheet values can
+      // contain extensions, duplicated country codes, or other extra digits;
+      // do not send an oversized value to Prisma/Postgres.
+      const contatoForDb = rawContato && rawContato.length <= 13 ? rawContato : null;
       const cep = allFilteredCeps[li];
       const coverage = getCoverage(li);
 
       if (contatoCol && normalizedPhones[li] === null) {
-        if (cpf) cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: "Número incorreto" });
+        if (cpf) cpfsToSave.push({ cpf, cep, contato: contatoForDb, cobertura: coverage, motivoRecusa: "Número incorreto" });
         continue;
       }
 
       if (!approvedRowIndicesSet.has(origIdx)) {
-        if (cpf) cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: "Sem WhatsApp" });
+        if (cpf) cpfsToSave.push({ cpf, cep, contato: contatoForDb, cobertura: coverage, motivoRecusa: "Sem WhatsApp" });
         continue;
       }
 
@@ -157,13 +161,13 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
 
       if (coverage === "Sem cobertura") {
         withoutCoverage++;
-        if (cpf) cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: "Sem cobertura" });
+        if (cpf) cpfsToSave.push({ cpf, cep, contato: contatoForDb, cobertura: coverage, motivoRecusa: "Sem cobertura" });
         continue;
       }
 
       withCoverage++;
       outputRows.push({ ...rows[origIdx], Cobertura: coverage });
-      if (cpf) cpfsToSave.push({ cpf, cep, contato: rawContato, cobertura: coverage, motivoRecusa: null });
+      if (cpf) cpfsToSave.push({ cpf, cep, contato: contatoForDb, cobertura: coverage, motivoRecusa: null });
     }
 
     updateJob(jobId, { progressMsg: "Salvando registros no banco..." });
