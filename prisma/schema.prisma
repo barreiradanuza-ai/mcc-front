@@ -48,6 +48,33 @@ model CepNio {
   @@map("ceps_nio")
 }
 
+model SuperListaNio {
+  id               BigInt   @id @default(autoincrement())
+  cep              String   @db.Char(8)
+  uf               String   @db.VarChar(2)
+  municipio        String?  @db.VarChar(120)
+  bairro           String?  @db.VarChar(160)
+  logradouro       String?  @db.VarChar(240)
+  noFachada        String?  @map("no_fachada") @db.VarChar(40)
+  complemento1     String?  @map("complemento1") @db.VarChar(160)
+  complemento2     String?  @map("complemento2") @db.VarChar(160)
+  complemento3     String?  @map("complemento3") @db.VarChar(160)
+  codigoLogradouro String?  @map("codigo_logradouro") @db.VarChar(80)
+  codigoCdo        String?  @map("codigo_cdo") @db.VarChar(80)
+  classificacao    String?  @db.VarChar(80)
+  celula           String?  @db.VarChar(80)
+  estacao          String?  @db.VarChar(80)
+  viabilidadeAtual String?  @map("viabilidade_atual") @db.VarChar(100)
+  regiao           String?  @db.VarChar(40)
+  relatorioOrigem  String?  @map("relatorio_origem") @db.VarChar(120)
+  atualizadoEm     DateTime @default(now()) @map("atualizado_em") @db.Timestamptz(6)
+
+  @@index([cep])
+  @@index([uf, municipio])
+  @@index([viabilidadeAtual])
+  @@map("super_lista_nio")
+}
+
 model CpfCobertura {
   cpf          String   @id @db.VarChar(11)
   cep          String?  @db.Char(8)
