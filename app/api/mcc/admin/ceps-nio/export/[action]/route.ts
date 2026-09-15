@@ -3,7 +3,7 @@ import { ensureMccSession } from "@/lib/mcc/authz";
 
 export const runtime = "nodejs";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333";
+const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.minhacasaconectada.net.br";
 const API_KEY = process.env.MCC_BACKEND_API_KEY || process.env.API_KEY || "mcc-n8n-2026-secret";
 
 export async function POST(req: Request, context: { params: Promise<{ action: string }> }) {
