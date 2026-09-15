@@ -37,3 +37,4 @@ export async function GET(req: Request, context: { params: Promise<{ action: str
   }
   return NextResponse.json(await response.json(), { status: response.status });
 }
+
