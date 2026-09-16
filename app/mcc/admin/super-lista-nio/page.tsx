@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 type Item = { id: string; cep: string; uf: string; municipio: string | null; bairro: string | null; logradouro: string | null; noFachada: string | null; viabilidadeAtual: string | null; regiao: string | null; relatorioOrigem: string | null };
-type ResponseData = { items: Item[]; total: number; page: number; totalPages: number };
+type ResponseData = { items: Item[]; total: number; page: number; totalPages: number; nioCoverage?: boolean; searchedCep?: string | null };
 
 export default function SuperListaNioPage() {
   const [data, setData] = useState<ResponseData>({ items: [], total: 0, page: 1, totalPages: 1 });
@@ -61,6 +61,9 @@ export default function SuperListaNioPage() {
       </div>
       <div className="mt-4 flex flex-wrap gap-2"><Button variant="outline" onClick={() => exportFile("csv")}><Download className="size-4" />Exportar CSV</Button><Button variant="outline" onClick={() => exportFile("xlsx")}><Download className="size-4" />Exportar XLSX</Button></div>
     </div>
+    {data.searchedCep && <div className={`rounded-xl border p-4 text-sm ${data.nioCoverage ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+      <strong>CEP {data.searchedCep}:</strong> {data.nioCoverage ? "possui cobertura NIO." : "não foi encontrado na base de cobertura NIO."} {data.nioCoverage && data.total === 0 ? "Não há fachadas detalhadas cadastradas para este CEP." : "As fachadas e a viabilidade aparecem na tabela abaixo."}
+    </div>}
     {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-3 flex items-center justify-between text-sm text-slate-600">Total: <strong className="text-slate-900">{data.total.toLocaleString("pt-BR")}</strong><span>Página {data.page} de {data.totalPages}</span></div>

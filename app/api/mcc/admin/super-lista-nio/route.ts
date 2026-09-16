@@ -38,6 +38,8 @@ export async function GET(req: Request) {
   if ("error" in authResult) return authResult.error;
   const url = new URL(req.url);
   const where = filters(url);
+  const cepQuery = url.searchParams.get("q")?.replace(/\D/g, "");
+  const exactCep = cepQuery && cepQuery.length === 8 ? cepQuery : null;
   const format = url.searchParams.get("format");
   if (format === "csv" || format === "xlsx") {
     const rows = await prisma.superListaNio.findMany({ where, orderBy: [{ uf: "asc" }, { cep: "asc" }], take: 200000, select });
@@ -62,9 +64,10 @@ export async function GET(req: Request) {
   }
   const page = parsePositiveInt(url.searchParams.get("page"), 1, 100000);
   const pageSize = parsePositiveInt(url.searchParams.get("pageSize"), 50, 200);
-  const [total, rows] = await Promise.all([
+  const [total, rows, nioCoverage] = await Promise.all([
     prisma.superListaNio.count({ where }),
     prisma.superListaNio.findMany({ where, orderBy: [{ uf: "asc" }, { cep: "asc" }], skip: (page - 1) * pageSize, take: pageSize, select }),
+    exactCep ? prisma.cepNio.findUnique({ where: { cep: exactCep }, select: { cep: true } }) : Promise.resolve(null),
   ]);
-  return NextResponse.json({ items: rows.map((row) => ({ ...row, id: row.id.toString() })), page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) });
+  return NextResponse.json({ items: rows.map((row) => ({ ...row, id: row.id.toString() })), page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)), nioCoverage: Boolean(nioCoverage), searchedCep: exactCep });
 }
