@@ -10,10 +10,7 @@ type Facade = Record<string, string>;
 type Result = { cep: string; address: Address; region: string; facades: Facade[]; total: number; source: string };
 
 const fields: [string, string][] = [
-  ["NO_FACHADA", "Fachada"], ["VIABILIDADE_ATUAL", "Viabilidade"], ["UF", "UF"],
-  ["MUNICIPIO", "Município"], ["BAIRRO", "Bairro"], ["LOGRADOURO", "Logradouro"],
-  ["CODIGO_CDO", "Código CDO"], ["ESTACAO", "Estação"], ["CELULA", "Célula"],
-  ["CLASSIFICACAO", "Classificação"], ["COMPLEMENTO1", "Complemento 1"],
+  ["NO_FACHADA", "Fachada"], ["COMPLEMENTO1", "Complemento 1"],
   ["COMPLEMENTO2", "Complemento 2"], ["COMPLEMENTO3", "Complemento 3"],
 ];
 
@@ -57,8 +54,8 @@ export default function ConsultaFachadasNioPage() {
         <div className="mt-3 grid gap-2 sm:grid-cols-2"><span><strong>CEP:</strong> {result.address.cep}</span><span><strong>Cidade/UF:</strong> {result.address.municipio}/{result.address.uf}</span><span><strong>Endereço:</strong> {[result.address.logradouro, result.address.bairro].filter(Boolean).join(" — ") || "não informado"}</span><span><strong>Relatório:</strong> {result.region}</span></div>
       </section>
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-5 py-4"><h2 className="font-semibold text-slate-900">Fachadas e viabilidade</h2><p className="text-xs text-slate-500">Fonte: {result.source}</p></div>
-        <div className="overflow-x-auto"><table className="min-w-[1500px] border-collapse text-sm"><thead className="bg-slate-50 text-left text-slate-600"><tr>{fields.map(([, label]) => <th key={label} className="border-b p-3">{label}</th>)}</tr></thead><tbody>{result.facades.length === 0 ? <tr><td colSpan={fields.length} className="p-10 text-center text-slate-500">Nenhuma fachada retornada para este CEP no relatório regional.</td></tr> : result.facades.map((row, index) => <tr key={`${row.NO_FACHADA ?? "fachada"}-${index}`} className="hover:bg-slate-50">{fields.map(([key]) => <td key={key} className="border-b p-3">{row[key] || "—"}</td>)}</tr>)}</tbody></table></div>
+        <div className="border-b border-slate-100 px-5 py-4"><h2 className="font-semibold text-slate-900">Fachadas e complementos</h2><p className="text-xs text-slate-500">Fonte: {result.source}</p></div>
+        <div className="overflow-x-auto"><table className="min-w-[760px] border-collapse text-sm"><thead className="bg-slate-50 text-left text-slate-600"><tr>{fields.map(([, label]) => <th key={label} className="border-b p-3">{label}</th>)}</tr></thead><tbody>{result.facades.length === 0 ? <tr><td colSpan={fields.length} className="p-10 text-center text-slate-500">Nenhuma fachada retornada para este CEP no relatório regional.</td></tr> : result.facades.map((row, index) => <tr key={`${row.NO_FACHADA ?? "fachada"}-${index}`} className="hover:bg-slate-50">{fields.map(([key]) => <td key={key} className="border-b p-3">{row[key] || "—"}</td>)}</tr>)}</tbody></table></div>
       </section>
     </>}
   </div>;
