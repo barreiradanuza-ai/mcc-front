@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Database, FileSpreadsheet, House, LayoutDashboard, MapPinned, Network, Radio, Users } from "lucide-react";
+import { Database, FileSpreadsheet, House, LayoutDashboard, MapPinned, Network, Radio, Search, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const links = [
@@ -11,6 +11,7 @@ const links = [
   { href: "/mcc/admin/ceps-claro", label: "CEPs Claro", icon: Radio },
   { href: "/mcc/admin/ceps-nio", label: "CEPs Nio", icon: Network },
   { href: "/mcc/admin/super-lista-nio", label: "Super Lista NIO", icon: Database },
+  { href: "/mcc/admin/consulta-fachadas-nio", label: "Consultar Fachadas NIO", icon: Search },
   { href: "/mcc/admin/ceps-tim", label: "CEPs Tim", icon: Database },
   { href: "/mcc/admin/cidades-promo-claro", label: "Cidades Promo Claro", icon: MapPinned },
   { href: "/mcc/admin/cpfs-cobertura", label: "CPFs Processados", icon: Users },
