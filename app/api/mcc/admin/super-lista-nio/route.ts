@@ -8,17 +8,23 @@ export const runtime = "nodejs";
 
 function filters(url: URL) {
   const q = url.searchParams.get("q")?.trim();
+  const qDigits = q?.replace(/\D/g, "");
   const uf = url.searchParams.get("uf")?.trim().toUpperCase();
   const municipio = url.searchParams.get("municipio")?.trim();
   const viabilidade = url.searchParams.get("viabilidade")?.trim();
   const where: Record<string, unknown> = {};
-  if (q) where.OR = [
-    { cep: { contains: q.replace(/\D/g, "") } },
-    { municipio: { contains: q, mode: "insensitive" } },
-    { bairro: { contains: q, mode: "insensitive" } },
-    { logradouro: { contains: q, mode: "insensitive" } },
-    { noFachada: { contains: q, mode: "insensitive" } },
-  ];
+  if (q) {
+    // CEP is CHAR(8) in PostgreSQL: use equality for a complete CEP instead
+    // of contains, which can miss values because of database padding.
+    if (qDigits?.length === 8) where.cep = qDigits;
+    else where.OR = [
+      { cep: { contains: qDigits ?? "" } },
+      { municipio: { contains: q, mode: "insensitive" } },
+      { bairro: { contains: q, mode: "insensitive" } },
+      { logradouro: { contains: q, mode: "insensitive" } },
+      { noFachada: { contains: q, mode: "insensitive" } },
+    ];
+  }
   if (uf) where.uf = uf;
   if (municipio) where.municipio = { contains: municipio, mode: "insensitive" };
   if (viabilidade) where.viabilidadeAtual = { contains: viabilidade, mode: "insensitive" };
@@ -32,6 +38,25 @@ const select = {
   estacao: true, viabilidadeAtual: true, regiao: true, relatorioOrigem: true,
   atualizadoEm: true,
 };
+
+async function fetchViaCep(cep: string) {
+  try {
+    const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`, { cache: "no-store" });
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data?.erro || !data?.localidade) return null;
+    return {
+      cep: data.cep ?? cep,
+      logradouro: data.logradouro ?? "",
+      bairro: data.bairro ?? "",
+      municipio: data.localidade ?? "",
+      uf: data.uf ?? "",
+      complemento: data.complemento ?? "",
+    };
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(req: Request) {
   const authResult = await ensureMccSession();
@@ -64,10 +89,11 @@ export async function GET(req: Request) {
   }
   const page = parsePositiveInt(url.searchParams.get("page"), 1, 100000);
   const pageSize = parsePositiveInt(url.searchParams.get("pageSize"), 50, 200);
+  const address = exactCep ? await fetchViaCep(exactCep) : null;
   const [total, rows, nioCoverage] = await Promise.all([
     prisma.superListaNio.count({ where }),
     prisma.superListaNio.findMany({ where, orderBy: [{ uf: "asc" }, { cep: "asc" }], skip: (page - 1) * pageSize, take: pageSize, select }),
     exactCep ? prisma.cepNio.findUnique({ where: { cep: exactCep }, select: { cep: true } }) : Promise.resolve(null),
   ]);
-  return NextResponse.json({ items: rows.map((row) => ({ ...row, id: row.id.toString() })), page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)), nioCoverage: Boolean(nioCoverage), searchedCep: exactCep });
+  return NextResponse.json({ items: rows.map((row) => ({ ...row, id: row.id.toString() })), page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)), nioCoverage: Boolean(nioCoverage), searchedCep: exactCep, address });
 }
