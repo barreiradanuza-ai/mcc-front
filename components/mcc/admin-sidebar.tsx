@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Database, FileSpreadsheet, House, LayoutDashboard, MapPinned, Network, Radio, Search, Users } from "lucide-react";
+import { Database, FileSpreadsheet, House, LayoutDashboard, MapPinned, Network, Radio, Search, Users, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/mcc/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/mcc/admin/adequacao-planilha", label: "Adequação de planilha", icon: Wand2 },
   { href: "/mcc", label: "Processar Planilha", icon: FileSpreadsheet },
   { href: "/mcc/admin/ceps-claro", label: "CEPs Claro", icon: Radio },
   { href: "/mcc/admin/ceps-nio", label: "CEPs Nio", icon: Network },
