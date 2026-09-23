@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { adequarPlanilha } from "@/lib/mcc/adequacao";
 import { ensureMccSession } from "@/lib/mcc/authz";
+import { reservarCpfsUnicos } from "@/lib/mcc/cpfGerador";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -25,7 +26,7 @@ export async function POST(req: Request) {
 
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
-    const { output, stats } = adequarPlanilha(buffer);
+    const { output, stats } = await adequarPlanilha(buffer, reservarCpfsUnicos);
     const base = file.name.replace(/\.[^.]+$/, "");
     const filename = `${base}_adequada.xlsx`;
 
