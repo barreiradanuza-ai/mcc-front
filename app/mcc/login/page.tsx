@@ -49,7 +49,7 @@ export default function LoginPage() {
             <Wifi className="size-7 text-white" />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold text-white">MCC Painel</h1>
+            <h1 className="text-2xl font-bold text-white">Conecta Aqui (Gestão de Base)</h1>
             <p className="mt-1 text-sm text-blue-200/70">Minha Casa Conectada</p>
           </div>
         </div>
