@@ -12,10 +12,18 @@ import { randomUUID } from "crypto";
 export const runtime = "nodejs";
 export const maxDuration = 30; // Only for receiving the file, not processing
 
+// "CPF" ou, em planilhas adequadas sem CPF original, "CPF Criado".
+function findCpfHeader(headers: string[]): string | undefined {
+  return (
+    headers.find((h) => h.toLowerCase().trim() === "cpf") ??
+    headers.find((h) => h.toLowerCase().trim() === "cpf criado")
+  );
+}
+
 async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], headers: string[], filename: string) {
   const t0 = performance.now();
   const cepCol = headers.find((h) => h.toLowerCase().trim() === "cep")!;
-  const cpfCol = headers.find((h) => h.toLowerCase().trim() === "cpf")!;
+  const cpfCol = findCpfHeader(headers)!;
   const contatoCol = headers.find((h) => h.toLowerCase().trim() === "contato"); // Optional
 
   try {
@@ -266,7 +274,7 @@ export async function POST(req: Request) {
   if (!headers.find((h) => h.toLowerCase().trim() === "cep")) {
     return NextResponse.json({ error: 'Coluna "CEP" não encontrada na planilha' }, { status: 400 });
   }
-  if (!headers.find((h) => h.toLowerCase().trim() === "cpf")) {
+  if (!findCpfHeader(headers)) {
     return NextResponse.json({ error: 'Coluna "CPF" não encontrada na planilha' }, { status: 400 });
   }
   // CONTATO é opcional: se ausente, a etapa de validação de WhatsApp é pulada.
