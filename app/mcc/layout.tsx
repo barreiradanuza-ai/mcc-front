@@ -22,7 +22,7 @@ export default async function MccLayout({
               <Wifi className="size-4" />
             </div>
             <div className="flex flex-col">
-              <span className="text-sm font-bold leading-tight text-foreground">MCC Painel</span>
+              <span className="text-sm font-bold leading-tight text-foreground">Conecta Aqui (Gestão de Base)</span>
               <span className="text-[10px] leading-tight text-muted-foreground">Minha Casa Conectada</span>
             </div>
           </a>
