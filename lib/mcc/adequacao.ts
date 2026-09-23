@@ -8,13 +8,19 @@
  *  - CONTATO: colunas telefone/celular/fone/whatsapp... → renomeada para "CONTATO"
  *    no formato +55DDDNUMERO. Se houver coluna DDD separada, ela é usada.
  *  - CPF: 11 dígitos, sem pontos/traços/espaços (zeros à esquerda restaurados).
- *    Sem CPF → gera CPF válido apenas para a planilha processar.
+ *    Sem CPF → gera CPF válido apenas para a planilha processar. Coluna criada se
+ *    chama "CPF Criado"; CPFs gerados nunca se repetem (reservados no banco).
  *  - Nome do cliente: "Maria da Silva" (caixa baixa, inicial maiúscula).
  *  - Demais colunas não são alteradas.
  */
 import * as XLSX from "xlsx";
 
 export const DEFAULT_CEP = "22790420";
+export const CPF_CRIADO_HEADER = "CPF Criado";
+export const ORIGEM_CPF_HEADER = "Origem CPF";
+
+/** Fornece `n` CPFs inéditos (que não estejam em `usados`). */
+export type CpfProvider = (n: number, usados: Set<string>) => Promise<string[]>;
 
 type Cell = unknown;
 
@@ -264,7 +270,10 @@ function findHeaderRow(aoa: Cell[][]): number {
 // Adequação
 // ---------------------------------------------------------------------------
 
-export function adequarLinhas(aoaInput: Cell[][]): { aoa: Cell[][]; stats: AdequacaoStats } {
+export async function adequarLinhas(
+  aoaInput: Cell[][],
+  cpfProvider?: CpfProvider,
+): Promise<{ aoa: Cell[][]; stats: AdequacaoStats }> {
   const stats: AdequacaoStats = {
     linhas: 0,
     cepsFormatados: 0,
@@ -368,13 +377,26 @@ export function adequarLinhas(aoaInput: Cell[][]): { aoa: Cell[][]; stats: Adequ
     return null;
   });
   cpfPre.forEach((c) => c && usedCpfs.add(c));
+  const faltantes = cpfPre.filter((c) => !c).length;
+  let novos: string[] = [];
+  if (faltantes > 0) {
+    novos = cpfProvider
+      ? await cpfProvider(faltantes, usedCpfs)
+      : Array.from({ length: faltantes }, () => generateCpf(usedCpfs));
+    if (novos.length !== faltantes) throw new Error("Não foi possível gerar CPFs suficientes");
+    novos.forEach((c) => usedCpfs.add(c));
+  }
+  let novoIdx = 0;
+  const cpfCriadoNaLinha: boolean[] = [];
   const cpfValues: string[] = cpfPre.map((c, idx) => {
     if (c) {
       if (cpfPrimary >= 0 && String(rows[idx][cpfPrimary] ?? "") !== c) stats.cpfsFormatados++;
+      cpfCriadoNaLinha.push(false);
       return c;
     }
     stats.cpfsGerados++;
-    return generateCpf(usedCpfs);
+    cpfCriadoNaLinha.push(true);
+    return novos[novoIdx++];
   });
 
   // ---- CONTATO -----------------------------------------------------------
@@ -431,9 +453,14 @@ export function adequarLinhas(aoaInput: Cell[][]): { aoa: Cell[][]; stats: Adequ
   let outRows: Cell[][] = rows.map((r) => keep.map((i) => r[i]));
 
   if (cpfPrimary < 0) {
+    // planilha sem CPF: coluna nova "CPF Criado" com CPFs gerados
     stats.colunaCpfCriada = true;
-    outHeader = [...outHeader, "CPF"];
+    outHeader = [...outHeader, CPF_CRIADO_HEADER];
     outRows = outRows.map((r, i) => [...r, cpfValues[i]]);
+  } else if (stats.cpfsGerados > 0) {
+    // algumas linhas sem CPF: marca quais foram criados
+    outHeader = [...outHeader, ORIGEM_CPF_HEADER];
+    outRows = outRows.map((r, i) => [...r, cpfCriadoNaLinha[i] ? CPF_CRIADO_HEADER : ""]);
   }
   if (cepPrimary < 0) {
     stats.colunaCepCriada = true;
@@ -445,7 +472,10 @@ export function adequarLinhas(aoaInput: Cell[][]): { aoa: Cell[][]; stats: Adequ
 }
 
 /** Lê o arquivo, adequa a primeira aba e devolve o xlsx (demais abas preservadas). */
-export function adequarPlanilha(buffer: Buffer): { output: Buffer; stats: AdequacaoStats } {
+export async function adequarPlanilha(
+  buffer: Buffer,
+  cpfProvider?: CpfProvider,
+): Promise<{ output: Buffer; stats: AdequacaoStats }> {
   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
   const firstName = wb.SheetNames[0];
   if (!firstName) throw new Error("Planilha vazia");
@@ -453,12 +483,12 @@ export function adequarPlanilha(buffer: Buffer): { output: Buffer; stats: Adequa
   const aoa = XLSX.utils.sheet_to_json<Cell[]>(sheet, { header: 1, raw: true, defval: "", blankrows: false });
   if (aoa.length < 2) throw new Error("Planilha sem dados");
 
-  const { aoa: out, stats } = adequarLinhas(aoa);
+  const { aoa: out, stats } = await adequarLinhas(aoa, cpfProvider);
   const newSheet = XLSX.utils.aoa_to_sheet(out, { cellDates: true, dateNF: "dd/mm/yyyy" });
 
   // Força CEP, CPF e CONTATO como texto (preserva zeros à esquerda)
   const hdr = out[0] as string[];
-  const textCols = hdr.map((h, i) => (h === "CEP" || h === "CPF" || h === "CONTATO" ? i : -1)).filter((i) => i >= 0);
+  const textCols = hdr.map((h, i) => (h === "CEP" || h === "CPF" || h === CPF_CRIADO_HEADER || h === "CONTATO" ? i : -1)).filter((i) => i >= 0);
   for (let r = 1; r < out.length; r++) {
     for (const c of textCols) {
       const addr = XLSX.utils.encode_cell({ r, c });
