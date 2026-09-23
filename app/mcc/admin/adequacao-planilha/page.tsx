@@ -182,7 +182,7 @@ export default function AdequacaoPlanilhaPage() {
           <ul className="mt-2 grid gap-1 text-sm text-slate-500 sm:grid-cols-2">
             <li><b className="text-slate-700">CEP</b>: 8 dígitos (00000000), reunidos em uma única coluna. Sem CEP → 22790420.</li>
             <li><b className="text-slate-700">CONTATO</b>: telefone/celular/fone… renomeado e no formato +5521000000000.</li>
-            <li><b className="text-slate-700">CPF</b>: 11 dígitos (00000000000). Sem CPF → gerado automaticamente.</li>
+            <li><b className="text-slate-700">CPF</b>: 11 dígitos (00000000000). Sem CPF → coluna &quot;CPF Criado&quot; com CPFs gerados que nunca se repetem.</li>
             <li><b className="text-slate-700">Nome</b>: caixa baixa com iniciais maiúsculas (Maria da Silva).</li>
           </ul>
           <p className="mt-2 text-xs text-slate-400">As demais colunas não são alteradas.</p>
@@ -356,7 +356,7 @@ function FileCard({
             <Chip ok label="Contatos formatados" value={s.contatosFormatados} />
             <Chip warn label="Contatos inválidos" value={s.contatosInvalidos} />
             <Chip ok label="CPFs formatados" value={s.cpfsFormatados} />
-            <Chip warn label={s.colunaCpfCriada ? "CPFs gerados (coluna criada)" : "CPFs gerados"} value={s.cpfsGerados} />
+            <Chip warn label={s.colunaCpfCriada ? "CPFs gerados (coluna CPF Criado)" : "CPFs gerados (marcados em Origem CPF)"} value={s.cpfsGerados} />
             <Chip ok label="Nomes ajustados" value={s.nomesFormatados} />
           </div>
           {(s.colunasRenomeadas.length > 0 || s.colunasCepMescladas.length > 0) && (
