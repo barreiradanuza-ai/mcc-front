@@ -93,3 +93,10 @@ model AppConfig {
 
   @@map("app_config")
 }
+
+model CpfGerado {
+  cpf       String   @id @db.VarChar(11)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@map("cpfs_gerados")
+}
