@@ -124,6 +124,18 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
 
     updateJob(jobId, { progressMsg: "Montando planilha de saída..." });
 
+    // Saída já no formato de trabalho: CONTATO +55DDDNUMERO e CEP com 8 dígitos.
+    function formatOutputRow(row: Record<string, unknown>, localIdx: number): Record<string, unknown> {
+      const out = { ...row };
+      const cep = allFilteredCeps[localIdx];
+      if (cep) out[cepCol] = cep;
+      if (contatoCol) {
+        const phone = normalizedPhones[localIdx];
+        if (phone) out[contatoCol] = `+${phone}`;
+      }
+      return out;
+    }
+
     const approvedRowIndicesSet = new Set(whatsappValidIndices);
     const cpfsToSave: { cpf: string; cep: string | null; contato: string | null; cobertura: string; motivoRecusa: string | null }[] = [];
 
@@ -155,7 +167,7 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
 
       if (coverage === "CEP inválido") {
         invalid++;
-        outputRows.push({ ...rows[origIdx], Cobertura: coverage });
+        outputRows.push({ ...formatOutputRow(rows[origIdx], li), Cobertura: coverage });
         continue;
       }
 
@@ -166,7 +178,7 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
       }
 
       withCoverage++;
-      outputRows.push({ ...rows[origIdx], Cobertura: coverage });
+      outputRows.push({ ...formatOutputRow(rows[origIdx], li), Cobertura: coverage });
       if (cpf) cpfsToSave.push({ cpf, cep, contato: contatoForDb, cobertura: coverage, motivoRecusa: null });
     }
 
