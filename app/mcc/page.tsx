@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
+import { takePendingUpload } from "@/lib/mcc/pendingUpload";
 import {
   Upload,
   Download,
@@ -80,6 +81,12 @@ export default function MccDashboard() {
 
   useEffect(() => {
     return () => stopTimers();
+  }, []);
+
+  // Planilha enviada pela tela "Adequação de planilha"
+  useEffect(() => {
+    const pending = takePendingUpload();
+    if (pending) setFile(pending);
   }, []);
 
   async function pollJobStatus(jobId: string) {
