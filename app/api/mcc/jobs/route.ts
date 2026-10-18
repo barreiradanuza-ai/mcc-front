@@ -144,6 +144,22 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
       return out;
     }
 
+    // Colunas individuais por operadora: "Sim" quando a operadora aparece
+    // na string de cobertura (ex.: "Claro Promo e Tim e Nio"). "Claro Promo"
+    // marca apenas a própria coluna, não a coluna "Claro".
+    const OPERATOR_COLUMNS = ["Claro", "Nio", "Tim", "Claro Promo"] as const;
+    function coverageFlags(coverage: string): Record<string, string> {
+      const parts = new Set(
+        coverage
+          .split(/\s+e\s+/i)
+          .map((p) => p.trim())
+          .filter(Boolean),
+      );
+      const flags: Record<string, string> = {};
+      for (const op of OPERATOR_COLUMNS) flags[op] = parts.has(op) ? "Sim" : "";
+      return flags;
+    }
+
     const approvedRowIndicesSet = new Set(whatsappValidIndices);
     const cpfsToSave: { cpf: string; cep: string | null; contato: string | null; cobertura: string; motivoRecusa: string | null }[] = [];
 
@@ -175,7 +191,7 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
 
       if (coverage === "CEP inválido") {
         invalid++;
-        outputRows.push({ ...formatOutputRow(rows[origIdx], li), Cobertura: coverage });
+        outputRows.push({ ...formatOutputRow(rows[origIdx], li), Cobertura: coverage, ...coverageFlags(coverage) });
         continue;
       }
 
@@ -186,7 +202,7 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
       }
 
       withCoverage++;
-      outputRows.push({ ...formatOutputRow(rows[origIdx], li), Cobertura: coverage });
+      outputRows.push({ ...formatOutputRow(rows[origIdx], li), Cobertura: coverage, ...coverageFlags(coverage) });
       if (cpf) cpfsToSave.push({ cpf, cep, contato: contatoForDb, cobertura: coverage, motivoRecusa: null });
     }
 
