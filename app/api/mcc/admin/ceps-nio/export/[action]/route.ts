@@ -17,7 +17,8 @@ export async function POST(req: Request, context: { params: Promise<{ action: st
     headers: { "x-api-key": API_KEY || "", ...(body ? { "content-type": "application/json" } : {}) },
     body: body || undefined,
     cache: "no-store",
-superListaNio  return NextResponse.json(await response.json(), { status: response.status });
+  });
+  return NextResponse.json(await response.json(), { status: response.status });
 }
 
 export async function GET(req: Request, context: { params: Promise<{ action: string }> }) {
