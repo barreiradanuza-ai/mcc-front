@@ -26,8 +26,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const sheet = XLSX.utils.json_to_sheet(data.length ? data : [{ Linha: "", Nome: "", Telefone: "", Erro: "Nenhuma falha" }]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, sheet, "falhas");
-  const buffer: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-  return new NextResponse(buffer, {
+  const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+  return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": `attachment; filename="envio_${id}_falhas.xlsx"`,
