@@ -6,6 +6,7 @@
  * plano, com progresso em memória e o resultado gravado em disparo_envios.
  */
 import { prisma } from "@/lib/db";
+import type { Prisma } from "@/lib/generated/prisma/client";
 import {
   dcCreateBusiness,
   dcCreateLead,
@@ -361,7 +362,7 @@ async function persistir(job: EnvioJob, extra: { status: string; mensagem?: stri
         atualizados: job.atualizados,
         falhas: job.falhas,
         mensagem: extra.mensagem ?? null,
-        erros: job.erros.slice(0, 2000),
+        erros: job.erros.slice(0, 2000) as unknown as Prisma.InputJsonValue,
         ...(extra.finished ? { finishedAt: new Date() } : {}),
       },
     });
