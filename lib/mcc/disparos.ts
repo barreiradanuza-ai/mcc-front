@@ -86,9 +86,9 @@ export function sugerirMapeamento(headers: string[]): Mapeamento {
     state: find("UF", "Estado"),
   };
   for (const k of Object.keys(campos) as LeadFieldKey[]) if (!campos[k]) delete campos[k];
-  const observacoes = ["Cobertura", "Claro", "Nio", "Tim", "Claro Promo", "Velocidade Contratada", "Serviço"].filter((c) =>
-    headers.some((h) => norm(h) === norm(c)),
-  );
+  // Todas as demais colunas vão para as observações do lead (nada se perde).
+  const usadas = new Set(Object.values(campos).map((c) => norm(c)));
+  const observacoes = headers.filter((h) => h.trim() !== "" && !usadas.has(norm(h)));
   return { campos, observacoes };
 }
 

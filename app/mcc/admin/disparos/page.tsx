@@ -70,8 +70,9 @@ interface EnvioHist {
 
 const SUGESTAO_PADRAO: Mapeamento = {
   campos: { name: "NOME", phone: "CONTATO", taxId: "CPF", zip: "CEP", address: "Logradouro", number: "Número", complement: "Abrev. Tipo Comp.", block: "Bairro", state: "UF" },
-  observacoes: ["Cobertura", "Claro", "Nio", "Tim", "Claro Promo", "Velocidade Contratada"],
+  observacoes: [],
 };
+SUGESTAO_PADRAO.observacoes = COLUNAS_PADRAO.filter((c) => !Object.values(SUGESTAO_PADRAO.campos).includes(c));
 
 const selectCls =
   "h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-xs outline-none focus-visible:border-mcc-blue focus-visible:ring-[3px] focus-visible:ring-mcc-blue/20 disabled:opacity-50";

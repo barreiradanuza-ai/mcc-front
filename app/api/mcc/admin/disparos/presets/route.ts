@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { ensureMccSession } from "@/lib/mcc/authz";
-import { lerPreset } from "@/lib/mcc/disparosPreset";
+import { garantirPresetPadrao, lerPreset } from "@/lib/mcc/disparosPreset";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   const { error } = await ensureMccSession();
   if (error) return error;
+  await garantirPresetPadrao();
   const presets = await prisma.disparoPreset.findMany({ orderBy: { nome: "asc" } });
   return NextResponse.json({ presets });
 }
