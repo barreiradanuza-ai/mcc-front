@@ -47,6 +47,7 @@ interface Preset {
   descricao: string | null;
   listaId: string | null; listaNome: string | null;
   tagId: string | null; tagNome: string | null;
+  tagModo: "fixa" | "por_envio"; tagPadrao: string | null;
   pipelineId: string | null; pipelineNome: string | null;
   stageId: string | null; stageNome: string | null;
   origem: string | null;
@@ -57,13 +58,13 @@ interface Preset {
 interface PlanilhaInfo { arquivo: string; headers: string[]; total: number; amostra: Record<string, unknown>[]; sugestao: Mapeamento }
 
 interface EnvioStatus {
-  id: number; status: string; progressMsg: string; processed: number; total: number;
+  id: number; status: string; progressMsg: string; tagNome?: string | null; processed: number; total: number;
   filtrados: number; criados: number; atualizados: number; falhas: number;
   erros: { linha: number; nome: string; telefone: string; erro: string }[];
 }
 
 interface EnvioHist {
-  id: number; presetNome: string; arquivo: string; status: string; total: number; filtrados: number;
+  id: number; presetNome: string; arquivo: string; tagNome: string | null; status: string; total: number; filtrados: number;
   criados: number; atualizados: number; falhas: number; mensagem: string | null; createdAt: string; finishedAt: string | null;
 }
 
@@ -80,6 +81,18 @@ function downloadBlob(blob: Blob, filename: string) {
   const a = document.createElement("a");
   a.href = url; a.download = filename; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function nomeBaseArquivo(arquivo: string): string {
+  return arquivo.replace(/\.[^.]+$/, "").replace(/_(cobertura|adequada(_cobertura)?)$/i, "").replace(/[^\p{L}\p{N}_-]+/gu, "_").replace(/^_+|_+$/g, "").slice(0, 80);
+}
+function resolverNomeTag(padrao: string | null | undefined, arquivo: string): string {
+  const d = new Date();
+  const dd = String(d.getDate()).padStart(2, "0"), mm = String(d.getMonth() + 1).padStart(2, "0"), yyyy = String(d.getFullYear());
+  const hh = String(d.getHours()).padStart(2, "0"), mi = String(d.getMinutes()).padStart(2, "0");
+  return (padrao || "api_{arquivo}")
+    .replace(/\{arquivo\}/gi, nomeBaseArquivo(arquivo)).replace(/\{data\}/gi, `${dd}${mm}${yyyy}`)
+    .replace(/\{dataiso\}/gi, `${yyyy}-${mm}-${dd}`).replace(/\{hora\}/gi, `${hh}${mi}`).trim().slice(0, 100);
 }
 
 const fmtData = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
@@ -223,11 +236,20 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
   const [lendo, setLendo] = useState(false);
   const [erro, setErro] = useState("");
   const [presetId, setPresetId] = useState<string>("");
+  const [tagNome, setTagNome] = useState("");
+  const [tagEditada, setTagEditada] = useState(false);
   const [envio, setEnvio] = useState<EnvioStatus | null>(null);
   const [iniciando, setIniciando] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const preset = useMemo(() => presets.find((p) => String(p.id) === presetId) ?? null, [presets, presetId]);
+
+  // Sugere o nome da tag deste envio a partir do padrão do disparo e do nome do arquivo.
+  useEffect(() => {
+    if (tagEditada) return;
+    if (preset?.tagModo === "por_envio" && info) setTagNome(resolverNomeTag(preset.tagPadrao, info.arquivo));
+    else setTagNome("");
+  }, [preset, info, tagEditada]);
 
   // Lê a planilha (arquivo ou job) para mostrar colunas e total
   const lerPlanilha = useCallback(async (f: File | null, jid: string | null) => {
@@ -254,7 +276,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
     if (!f) return;
     const ext = f.name.split(".").pop()?.toLowerCase();
     if (ext !== "xlsx" && ext !== "xls") { setErro("Envie um arquivo .xlsx ou .xls"); return; }
-    setFile(f); setJobId(null); setEnvio(null);
+    setFile(f); setJobId(null); setEnvio(null); setTagEditada(false);
     void lerPlanilha(f, null);
   }
 
@@ -281,10 +303,11 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
       const fd = new FormData();
       if (file) fd.append("file", file); else if (jobId) fd.append("jobId", jobId);
       fd.append("presetId", String(preset.id));
+      if (preset.tagModo === "por_envio") fd.append("tagNome", tagNome.trim());
       const res = await fetch("/api/mcc/admin/disparos/envios", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) { setErro(data.error || "Não foi possível iniciar o envio"); return; }
-      setEnvio({ id: data.id, status: "pending", progressMsg: "Iniciando...", processed: 0, total: data.total, filtrados: 0, criados: 0, atualizados: 0, falhas: 0, erros: [] });
+      setEnvio({ id: data.id, status: "pending", progressMsg: "Iniciando...", tagNome: data.tagNome, processed: 0, total: data.total, filtrados: 0, criados: 0, atualizados: 0, falhas: 0, erros: [] });
       void poll(data.id);
     } catch {
       setErro("Falha ao iniciar o envio");
@@ -306,13 +329,13 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
 
   function reset() {
     if (pollRef.current) clearTimeout(pollRef.current);
-    setFile(null); setJobId(null); setInfo(null); setEnvio(null); setErro("");
+    setFile(null); setJobId(null); setInfo(null); setEnvio(null); setErro(""); setTagEditada(false); setTagNome("");
     if (inputRef.current) inputRef.current.value = "";
   }
 
   const colunasFaltando = useMemo(() => {
     if (!preset || !info) return [] as string[];
-    const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+    const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
     const has = (c?: string | null) => !!c && info.headers.some((h) => norm(h) === norm(c));
     const faltam: string[] = [];
     for (const f of LEAD_FIELDS) { const c = preset.mapeamento.campos[f.key]; if (c && !has(c)) faltam.push(`${f.label} → "${c}"`); }
@@ -323,7 +346,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
 
   const faltaObrigatoria = useMemo(() => {
     if (!preset || !info) return false;
-    const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+    const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
     return (["name", "phone"] as LeadFieldKey[]).some((k) => { const c = preset.mapeamento.campos[k]; return !c || !info.headers.some((h) => norm(h) === norm(c)); });
   }, [preset, info]);
 
@@ -440,7 +463,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
               </div>
               {envio.status === "done" && (
                 <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                  Os leads já estão no DataCrazy{preset?.listaNome ? ` na lista "${preset.listaNome}"` : ""}{preset?.tagNome ? ` com a tag "${preset.tagNome}"` : ""}{preset?.stageNome ? ` na etapa "${preset.stageNome}"` : ""}. Agora é só iniciar o Impulso lá.
+                  Os leads já estão no DataCrazy{preset?.listaNome ? ` na lista "${preset.listaNome}"` : ""}{envio.tagNome ? ` com a tag "${envio.tagNome}"` : ""}{preset?.stageNome ? ` na etapa "${preset.stageNome}"` : ""}. Agora é só iniciar o Impulso lá.
                 </p>
               )}
             </div>
@@ -472,7 +495,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
               <div className="flex flex-col gap-2 rounded-xl bg-slate-50 p-4 text-sm">
                 {preset.descricao && <p className="text-slate-600">{preset.descricao}</p>}
                 <Linha icon={ListChecks} label="Lista" value={preset.listaNome} />
-                <Linha icon={Tag} label="Tag" value={preset.tagNome} />
+                <Linha icon={Tag} label="Tag" value={preset.tagModo === "por_envio" ? `nova a cada envio (${preset.tagPadrao || "api_{arquivo}"})` : preset.tagNome} />
                 <Linha icon={Workflow} label="Etapa" value={preset.stageNome ? `${preset.pipelineNome ?? ""} › ${preset.stageNome}` : null} />
                 <Linha icon={Filter} label="Filtro" value={preset.filtroColuna ? `${preset.filtroColuna} = ${preset.filtroValor || "(preenchido)"}` : null} />
                 <div className="mt-1 border-t border-slate-200 pt-2 text-xs text-slate-500">
@@ -480,6 +503,13 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
                   {preset.mapeamento.observacoes.length > 0 && <> · Observações: {preset.mapeamento.observacoes.join(", ")}</>}
                 </div>
               </div>
+            )}
+
+            {preset?.tagModo === "por_envio" && info && (
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-slate-600">Tag deste envio (criada no DataCrazy se não existir)</span>
+                <Input value={tagNome} onChange={(e) => { setTagNome(e.target.value); setTagEditada(true); }} disabled={!!emAndamento} placeholder="Ex.: api_OP_TOTAL_16102026" />
+              </label>
             )}
 
             {preset && info && colunasFaltando.length > 0 && (
@@ -497,7 +527,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
 
             <Button
               className="w-full bg-mcc-blue hover:bg-mcc-blue/90"
-              disabled={!preset || !info || !!emAndamento || iniciando || faltaObrigatoria || !options?.configured}
+              disabled={!preset || !info || !!emAndamento || iniciando || faltaObrigatoria || !options?.configured || (preset.tagModo === "por_envio" && !tagNome.trim())}
               onClick={iniciar}
             >
               {iniciando ? <Loader2 className="size-4 animate-spin" /> : <Rocket className="size-4" />}
@@ -580,7 +610,7 @@ function DisparosTab({ presets, loading, options, onChanged, onOptionsChanged }:
               {p.descricao && <p className="text-sm text-slate-500">{p.descricao}</p>}
               <div className="mt-1 flex flex-wrap gap-1.5 text-xs">
                 {p.listaNome && <Chip icon={ListChecks} text={`Lista: ${p.listaNome}`} />}
-                {p.tagNome && <Chip icon={Tag} text={`Tag: ${p.tagNome}`} />}
+                {p.tagModo === "por_envio" ? <Chip icon={Tag} text={`Tag por envio: ${p.tagPadrao || "api_{arquivo}"}`} /> : p.tagNome && <Chip icon={Tag} text={`Tag: ${p.tagNome}`} />}
                 {p.stageNome && <Chip icon={Workflow} text={`${p.pipelineNome ?? ""} › ${p.stageNome}`} />}
                 {p.filtroColuna && <Chip icon={Filter} text={`${p.filtroColuna} = ${p.filtroValor || "(preenchido)"}`} />}
               </div>
@@ -607,6 +637,8 @@ function PresetForm({ inicial, options, onCancel, onSaved, onOptionsChanged }: {
   const [descricao, setDescricao] = useState(inicial?.descricao ?? "");
   const [listaId, setListaId] = useState(inicial?.listaId ?? "");
   const [tagId, setTagId] = useState(inicial?.tagId ?? "");
+  const [tagModo, setTagModo] = useState<"fixa" | "por_envio">(inicial?.tagModo ?? "por_envio");
+  const [tagPadrao, setTagPadrao] = useState(inicial?.tagPadrao ?? "api_{arquivo}");
   const [pipelineId, setPipelineId] = useState(inicial?.pipelineId ?? "");
   const [stageId, setStageId] = useState(inicial?.stageId ?? "");
   const [origem, setOrigem] = useState(inicial?.origem ?? "Disparo MCC");
@@ -657,7 +689,8 @@ function PresetForm({ inicial, options, onCancel, onSaved, onOptionsChanged }: {
       const payload = {
         nome, descricao,
         listaId: listaId || null, listaNome: listaOpts.find((l) => l.id === listaId)?.name ?? null,
-        tagId: tagId || null, tagNome: tagOpts.find((t) => t.id === tagId)?.name ?? null,
+        tagModo, tagPadrao,
+        tagId: tagModo === "fixa" ? tagId || null : null, tagNome: tagModo === "fixa" ? tagOpts.find((t) => t.id === tagId)?.name ?? null : null,
         pipelineId: pipelineId || null, pipelineNome: pipeline?.name ?? null,
         stageId: stageId || null, stageNome: stages.find((s) => s.id === stageId)?.name ?? null,
         origem, filtroColuna: filtroColuna || null, filtroValor: filtroValor || null,
@@ -678,7 +711,7 @@ function PresetForm({ inicial, options, onCancel, onSaved, onOptionsChanged }: {
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-100 bg-slate-50/50 px-8 py-5">
         <h2 className="font-semibold text-slate-800">{inicial ? `Editar: ${inicial.nome}` : "Novo disparo"}</h2>
-        <p className="mt-1 text-sm text-slate-500">Escolha pelo menos um destino (lista, tag ou etapa) e confira o mapeamento das colunas.</p>
+        <p className="mt-1 text-sm text-slate-500">Defina para onde os leads vão no DataCrazy e confira o mapeamento das colunas (já vem preenchido para a planilha do portal).</p>
       </div>
       <div className="grid gap-8 p-8 lg:grid-cols-2">
         <div className="flex flex-col gap-4">
@@ -702,15 +735,30 @@ function PresetForm({ inicial, options, onCancel, onSaved, onOptionsChanged }: {
               <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" onClick={() => { setCriandoTipo("lista"); setNovoNome(""); }} disabled={!options?.configured}><Plus className="size-4" /> Nova</Button>
             </div>
           </Campo>
-          <Campo label="Tag">
-            <div className="flex gap-2">
-              <select className={selectCls} value={tagId} onChange={(e) => setTagId(e.target.value)}>
-                <option value="">— nenhuma —</option>
-                {tagOpts.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-              <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" onClick={() => { setCriandoTipo("tag"); setNovoNome(""); }} disabled={!options?.configured}><Plus className="size-4" /> Nova</Button>
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-medium text-slate-600">Tag</span>
+            <div className="flex gap-4 text-sm">
+              <label className="flex items-center gap-1.5"><input type="radio" checked={tagModo === "por_envio"} onChange={() => setTagModo("por_envio")} /> Nova tag a cada envio</label>
+              <label className="flex items-center gap-1.5"><input type="radio" checked={tagModo === "fixa"} onChange={() => setTagModo("fixa")} /> Tag fixa</label>
             </div>
-          </Campo>
+            {tagModo === "por_envio" ? (
+              <>
+                <Input value={tagPadrao} onChange={(e) => setTagPadrao(e.target.value)} placeholder="api_{arquivo}" />
+                <p className="text-xs text-slate-500">
+                  Padrão do nome. Use <code>{"{arquivo}"}</code> (nome da planilha), <code>{"{data}"}</code> (DDMMAAAA), <code>{"{dataiso}"}</code> ou <code>{"{hora}"}</code>.
+                  Ex.: <code>api_{"{arquivo}"}</code> → <code>api_OP_TOTAL_16102026</code>. Você ainda pode ajustar o nome na hora do envio.
+                </p>
+              </>
+            ) : (
+              <div className="flex gap-2">
+                <select className={selectCls} value={tagId} onChange={(e) => setTagId(e.target.value)}>
+                  <option value="">— escolha —</option>
+                  {tagOpts.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" onClick={() => { setCriandoTipo("tag"); setNovoNome(""); }} disabled={!options?.configured}><Plus className="size-4" /> Nova</Button>
+              </div>
+            )}
+          </div>
           {criandoTipo && (
             <div className="flex items-center gap-2 rounded-lg border border-mcc-blue/30 bg-mcc-light/40 p-3">
               <Input autoFocus value={novoNome} onChange={(e) => setNovoNome(e.target.value)} placeholder={`Nome da nova ${criandoTipo}`} onKeyDown={(e) => e.key === "Enter" && criarNoDataCrazy()} />
@@ -847,6 +895,7 @@ function HistoricoTab() {
                 <th className="px-4 py-2 text-left">Quando</th>
                 <th className="px-4 py-2 text-left">Disparo</th>
                 <th className="px-4 py-2 text-left">Planilha</th>
+                <th className="px-4 py-2 text-left">Tag</th>
                 <th className="px-4 py-2 text-left">Status</th>
                 <th className="px-4 py-2 text-right">Total</th>
                 <th className="px-4 py-2 text-right">Criados</th>
@@ -862,6 +911,7 @@ function HistoricoTab() {
                   <td className="whitespace-nowrap px-4 py-2 text-slate-600">{fmtData(e.createdAt)}</td>
                   <td className="px-4 py-2 font-medium text-slate-800">{e.presetNome}</td>
                   <td className="max-w-[220px] truncate px-4 py-2 text-slate-600" title={e.arquivo}>{e.arquivo}</td>
+                  <td className="whitespace-nowrap px-4 py-2 text-slate-700">{e.tagNome ?? "—"}</td>
                   <td className="px-4 py-2"><span className={cn("rounded-full border px-2 py-0.5 text-xs font-medium", statusCls[e.status] ?? "bg-slate-50 text-slate-600 border-slate-200")} title={e.mensagem ?? ""}>{statusLabel[e.status] ?? e.status}</span></td>
                   <td className="px-4 py-2 text-right">{e.total}</td>
                   <td className="px-4 py-2 text-right text-emerald-700">{e.criados}</td>

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { ensureMccSession } from "@/lib/mcc/authz";
 import { datacrazyConfigured } from "@/lib/mcc/datacrazy";
-import { hasRunningEnvio, iniciarEnvio, parseMapeamento, type PresetEnvio } from "@/lib/mcc/disparos";
+import { garantirTag, hasRunningEnvio, iniciarEnvio, parseMapeamento, resolverNomeTag, type PresetEnvio } from "@/lib/mcc/disparos";
 import { lerPlanilhaDaRequisicao } from "@/lib/mcc/disparosPlanilha";
 
 export const runtime = "nodejs";
@@ -17,7 +17,7 @@ export async function GET(req: Request) {
     orderBy: { id: "desc" },
     take: limit,
     select: {
-      id: true, presetId: true, presetNome: true, arquivo: true, status: true, total: true, filtrados: true,
+      id: true, presetId: true, presetNome: true, arquivo: true, tagNome: true, status: true, total: true, filtrados: true,
       criados: true, atualizados: true, falhas: true, mensagem: true, createdAt: true, finishedAt: true,
     },
   });
@@ -42,11 +42,27 @@ export async function POST(req: Request) {
   const p = await prisma.disparoPreset.findUnique({ where: { id: presetId } });
   if (!p) return NextResponse.json({ error: "Disparo não encontrado" }, { status: 404 });
 
+  // Tag: fixa (do preset) ou criada por envio (nome vindo da tela ou do padrão do preset).
+  let tagId = p.tagId;
+  let tagNome = p.tagNome;
+  if (p.tagModo === "por_envio") {
+    const nome = (lida.extra.tagNome || "").trim() || resolverNomeTag(p.tagPadrao, lida.arquivo);
+    if (!nome) return NextResponse.json({ error: "Informe o nome da tag deste envio" }, { status: 400 });
+    try {
+      const t = await garantirTag(nome);
+      tagId = t.id;
+      tagNome = t.name;
+    } catch (e) {
+      return NextResponse.json({ error: `Não foi possível criar a tag no DataCrazy: ${e instanceof Error ? e.message : e}` }, { status: 502 });
+    }
+  }
+
   const preset: PresetEnvio = {
     id: p.id,
     nome: p.nome,
     listaId: p.listaId,
-    tagId: p.tagId,
+    tagId,
+    tagNome,
     stageId: p.stageId,
     origem: p.origem,
     filtroColuna: p.filtroColuna,
@@ -55,7 +71,7 @@ export async function POST(req: Request) {
   };
 
   // Confere se as colunas obrigatórias existem nesta planilha.
-  const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+  const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
   const faltam = ["name", "phone"].filter((k) => {
     const col = preset.mapeamento.campos[k as "name" | "phone"];
     return !col || !lida.headers.some((h) => norm(h) === norm(col));
@@ -68,5 +84,5 @@ export async function POST(req: Request) {
   }
 
   const job = await iniciarEnvio(lida.rows, lida.arquivo, preset);
-  return NextResponse.json({ id: job.id, total: job.total }, { status: 202 });
+  return NextResponse.json({ id: job.id, total: job.total, tagNome: job.tagNome }, { status: 202 });
 }

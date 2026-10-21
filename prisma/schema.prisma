@@ -110,6 +110,10 @@ model DisparoPreset {
   listaNome   String?  @map("lista_nome") @db.VarChar(160)
   tagId       String?  @map("tag_id") @db.VarChar(80)
   tagNome     String?  @map("tag_nome") @db.VarChar(160)
+  /// "fixa" usa tagId; "por_envio" cria uma tag nova a cada envio a partir de tagPadrao
+  tagModo     String   @default("por_envio") @map("tag_modo") @db.VarChar(20)
+  /// padrão do nome da tag por envio, ex.: "api_{arquivo}" ({arquivo}, {data}, {hora})
+  tagPadrao   String?  @map("tag_padrao") @db.VarChar(160)
   pipelineId  String?  @map("pipeline_id") @db.VarChar(80)
   pipelineNome String? @map("pipeline_nome") @db.VarChar(160)
   stageId     String?  @map("stage_id") @db.VarChar(80)
@@ -133,6 +137,7 @@ model DisparoEnvio {
   preset      DisparoPreset? @relation(fields: [presetId], references: [id], onDelete: SetNull)
   presetNome  String   @map("preset_nome") @db.VarChar(120)
   arquivo     String   @db.VarChar(255)
+  tagNome     String?  @map("tag_nome") @db.VarChar(160)
   status      String   @db.VarChar(20)
   total       Int      @default(0)
   filtrados   Int      @default(0)

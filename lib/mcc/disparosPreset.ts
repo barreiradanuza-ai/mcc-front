@@ -14,9 +14,11 @@ export function lerPreset(body: Record<string, unknown>) {
   const erroMap = validarMapeamento(mapeamento);
   if (erroMap) return { erro: erroMap } as const;
   const listaId = str(body.listaId, 80);
-  const tagId = str(body.tagId, 80);
+  const tagModo = body.tagModo === "fixa" ? "fixa" : "por_envio";
+  const tagId = tagModo === "fixa" ? str(body.tagId, 80) : null;
+  const tagPadrao = tagModo === "por_envio" ? str(body.tagPadrao, 160) || "api_{arquivo}" : null;
+  if (tagModo === "fixa" && !tagId) return { erro: "Escolha a tag fixa ou mude para tag por envio" } as const;
   const stageId = str(body.stageId, 80);
-  if (!listaId && !tagId && !stageId) return { erro: "Escolha pelo menos um destino: lista, tag ou etapa do funil" } as const;
   return {
     data: {
       nome,
@@ -24,7 +26,9 @@ export function lerPreset(body: Record<string, unknown>) {
       listaId,
       listaNome: str(body.listaNome),
       tagId,
-      tagNome: str(body.tagNome),
+      tagNome: tagModo === "fixa" ? str(body.tagNome) : null,
+      tagModo,
+      tagPadrao,
       pipelineId: str(body.pipelineId, 80),
       pipelineNome: str(body.pipelineNome),
       stageId,

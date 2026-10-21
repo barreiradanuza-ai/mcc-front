@@ -9,6 +9,8 @@ import { prisma } from "@/lib/db";
 import {
   dcCreateBusiness,
   dcCreateLead,
+  dcCreateTag,
+  dcTags,
   dcFindLeadByPhone,
   dcFindLeadByTaxId,
   dcLeadHasBusinessInStage,
@@ -57,7 +59,7 @@ export const COLUNAS_PADRAO = [
 const norm = (s: unknown) =>
   String(s ?? "")
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
 
@@ -116,7 +118,9 @@ export interface PresetEnvio {
   id: number | null;
   nome: string;
   listaId: string | null;
+  /** tag já resolvida (id) — no modo "por_envio" é preenchida ao iniciar o envio */
   tagId: string | null;
+  tagNome?: string | null;
   stageId: string | null;
   origem: string | null;
   filtroColuna: string | null;
@@ -210,6 +214,46 @@ export function passaFiltro(row: Row, preset: PresetEnvio): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Tag por envio
+// ---------------------------------------------------------------------------
+
+/** Nome base do arquivo, sem extensão e sem sufixos gerados pelo portal. */
+export function nomeBaseArquivo(arquivo: string): string {
+  return arquivo
+    .replace(/\.[^.]+$/, "")
+    .replace(/_(cobertura|adequada(_cobertura)?)$/i, "")
+    .replace(/[^\p{L}\p{N}_-]+/gu, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+}
+
+/** Expande {arquivo}, {data} (DDMMAAAA), {dataiso} (AAAA-MM-DD) e {hora} (HHMM). */
+export function resolverNomeTag(padrao: string | null | undefined, arquivo: string, agora = new Date()): string {
+  const dd = String(agora.getDate()).padStart(2, "0");
+  const mm = String(agora.getMonth() + 1).padStart(2, "0");
+  const yyyy = String(agora.getFullYear());
+  const hh = String(agora.getHours()).padStart(2, "0");
+  const mi = String(agora.getMinutes()).padStart(2, "0");
+  const nome = (padrao || "api_{arquivo}")
+    .replace(/\{arquivo\}/gi, nomeBaseArquivo(arquivo))
+    .replace(/\{data\}/gi, `${dd}${mm}${yyyy}`)
+    .replace(/\{dataiso\}/gi, `${yyyy}-${mm}-${dd}`)
+    .replace(/\{hora\}/gi, `${hh}${mi}`)
+    .trim();
+  return nome.slice(0, 100);
+}
+
+/** Garante que a tag existe no DataCrazy (procura pelo nome; cria se não houver). */
+export async function garantirTag(nome: string): Promise<{ id: string; name: string; criada: boolean }> {
+  const alvo = norm(nome);
+  const existentes = await dcTags();
+  const achada = existentes.find((t) => norm(t.name) === alvo);
+  if (achada) return { id: achada.id, name: achada.name, criada: false };
+  const nova = await dcCreateTag(nome);
+  return { id: nova.id, name: nova.name, criada: true };
+}
+
+// ---------------------------------------------------------------------------
 // Job em memória
 // ---------------------------------------------------------------------------
 
@@ -226,6 +270,7 @@ export interface EnvioJob {
   id: number;
   status: EnvioStatus;
   progressMsg: string;
+  tagNome: string | null;
   processed: number;
   total: number;
   filtrados: number;
@@ -280,6 +325,7 @@ export async function iniciarEnvio(rows: Row[], arquivo: string, preset: PresetE
       presetId: preset.id,
       presetNome: preset.nome,
       arquivo: arquivo.slice(0, 255),
+      tagNome: preset.tagNome ?? null,
       status: "processing",
       total: rows.length,
     },
@@ -288,6 +334,7 @@ export async function iniciarEnvio(rows: Row[], arquivo: string, preset: PresetE
     id: registro.id,
     status: "pending",
     progressMsg: "Preparando envio...",
+    tagNome: preset.tagNome ?? null,
     processed: 0,
     total: rows.length,
     filtrados: 0,
