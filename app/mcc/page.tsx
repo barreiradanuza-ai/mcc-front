@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   RotateCcw,
   TableProperties,
+  Rocket,
   UserX,
   PhoneOff,
   MessageSquareOff,
@@ -33,6 +34,7 @@ interface ProcessResult {
   elapsedMs: number;
   downloadUrl: string;
   filename: string;
+  jobId: string;
 }
 
 const POLL_INTERVAL_MS = 3000;
@@ -133,6 +135,7 @@ export default function MccDashboard() {
           elapsedMs: stats.elapsedMs,
           downloadUrl,
           filename: data.resultFilename,
+          jobId,
         });
         setLoading(false);
         setProgressMsg("");
@@ -420,6 +423,14 @@ export default function MccDashboard() {
                   >
                     <Download className="mr-2 size-4" />
                     Baixar Planilha Processada
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-11 border-mcc-blue/30 bg-white text-mcc-blue hover:bg-mcc-light"
+                    onClick={() => { window.location.href = `/mcc/admin/disparos?jobId=${encodeURIComponent(result.jobId)}`; }}
+                  >
+                    <Rocket className="mr-2 size-4" />
+                    Enviar ao DataCrazy
                   </Button>
                   <Button variant="outline" className="h-11 border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50" onClick={handleReset}>
                     <RotateCcw className="mr-2 size-4" />

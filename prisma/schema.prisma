@@ -100,3 +100,50 @@ model CpfGerado {
 
   @@map("cpfs_gerados")
 }
+
+/// Preset de disparo: para onde os leads vão no DataCrazy e como as colunas da planilha são mapeadas.
+model DisparoPreset {
+  id          Int      @id @default(autoincrement())
+  nome        String   @db.VarChar(120)
+  descricao   String?
+  listaId     String?  @map("lista_id") @db.VarChar(80)
+  listaNome   String?  @map("lista_nome") @db.VarChar(160)
+  tagId       String?  @map("tag_id") @db.VarChar(80)
+  tagNome     String?  @map("tag_nome") @db.VarChar(160)
+  pipelineId  String?  @map("pipeline_id") @db.VarChar(80)
+  pipelineNome String? @map("pipeline_nome") @db.VarChar(160)
+  stageId     String?  @map("stage_id") @db.VarChar(80)
+  stageNome   String?  @map("stage_nome") @db.VarChar(160)
+  origem      String?  @db.VarChar(120)
+  filtroColuna String? @map("filtro_coluna") @db.VarChar(120)
+  filtroValor  String? @map("filtro_valor") @db.VarChar(120)
+  /// { campos: { name: "NOME", phone: "CONTATO", ... }, observacoes: ["Cobertura", ...] }
+  mapeamento  Json
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+  envios      DisparoEnvio[]
+
+  @@map("disparo_presets")
+}
+
+/// Histórico de envios de planilhas ao DataCrazy.
+model DisparoEnvio {
+  id          Int      @id @default(autoincrement())
+  presetId    Int?     @map("preset_id")
+  preset      DisparoPreset? @relation(fields: [presetId], references: [id], onDelete: SetNull)
+  presetNome  String   @map("preset_nome") @db.VarChar(120)
+  arquivo     String   @db.VarChar(255)
+  status      String   @db.VarChar(20)
+  total       Int      @default(0)
+  filtrados   Int      @default(0)
+  criados     Int      @default(0)
+  atualizados Int      @default(0)
+  falhas      Int      @default(0)
+  mensagem    String?
+  /// [{ linha, nome, telefone, erro }]
+  erros       Json?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  finishedAt  DateTime? @map("finished_at") @db.Timestamptz()
+
+  @@map("disparo_envios")
+}

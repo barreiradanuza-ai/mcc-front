@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Database, FileSpreadsheet, House, LayoutDashboard, MapPinned, Network, Radio, Users, Wand2 } from "lucide-react";
+import { Database, FileSpreadsheet, House, LayoutDashboard, MapPinned, Network, Radio, Rocket, Users, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const links = [
@@ -14,6 +14,7 @@ const links = [
   { href: "/mcc/admin/ceps-tim", label: "CEPs Tim", icon: Database },
   { href: "/mcc/admin/cidades-promo-claro", label: "Cidades Promo Claro", icon: MapPinned },
   { href: "/mcc/admin/cpfs-cobertura", label: "CPFs Processados", icon: Users },
+  { href: "/mcc/admin/disparos", label: "Disparos DataCrazy", icon: Rocket },
 ];
 
 export function AdminSidebar() {
