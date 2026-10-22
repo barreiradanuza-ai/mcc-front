@@ -1,0 +1,25 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Só para o prisma generate / next build; nenhuma conexão é feita.
+      DATABASE_URL: postgresql://user:pass@localhost:5432/db
+      AUTH_SECRET: ci-build-secret
+      AUTH_TRUST_HOST: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx next build
