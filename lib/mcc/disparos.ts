@@ -50,6 +50,8 @@ export interface Mapeamento {
   campos: Partial<Record<LeadFieldKey, string>>;
   /** id do campo adicional (DataCrazy) -> nome da coluna na planilha */
   adicionais: Record<string, string>;
+  /** id do campo adicional -> valor fixo aplicado a todos os leads (ex.: Origem do Lead = "Disparo API") */
+  fixos: Record<string, string>;
   /** colunas copiadas para as observações do lead, no formato "Coluna: valor" */
   observacoes: string[];
 }
@@ -118,8 +120,15 @@ export function sugerirMapeamento(headers: string[], camposAdicionais: DcCampoAd
 
   // Todas as demais colunas vão para as observações do lead (nada se perde).
   const observacoes = headers.filter((h) => h.trim() !== "" && !usadas.has(norm(h)));
-  return { campos, adicionais, observacoes };
+  return { campos, adicionais, fixos: { ...(base?.fixos ?? {}) }, observacoes };
 }
+
+/** Campos adicionais que espelham campos padrão do lead (preenchidos automaticamente). */
+const ESPELHOS: { nome: string; de: LeadFieldKey }[] = [
+  { nome: "nome lead", de: "name" },
+  { nome: "cpf lead", de: "taxId" },
+  { nome: "email lead", de: "email" },
+];
 
 export function parseMapeamento(v: unknown): Mapeamento {
   const o = (v && typeof v === "object" ? v : {}) as Partial<Mapeamento>;
@@ -132,8 +141,11 @@ export function parseMapeamento(v: unknown): Mapeamento {
   const adicionais: Record<string, string> = {};
   const srcAd = (o.adicionais && typeof o.adicionais === "object" ? o.adicionais : {}) as Record<string, unknown>;
   for (const [id, col] of Object.entries(srcAd)) if (id && typeof col === "string" && col.trim()) adicionais[id] = col.trim();
+  const fixos: Record<string, string> = {};
+  const srcFx = (o.fixos && typeof o.fixos === "object" ? o.fixos : {}) as Record<string, unknown>;
+  for (const [id, val] of Object.entries(srcFx)) if (id && typeof val === "string" && val.trim()) fixos[id] = val.trim();
   const observacoes = Array.isArray(o.observacoes) ? o.observacoes.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
-  return { campos, adicionais, observacoes };
+  return { campos, adicionais, fixos, observacoes };
 }
 
 export function validarMapeamento(m: Mapeamento): string | null {
@@ -149,6 +161,8 @@ export function validarMapeamento(m: Mapeamento): string | null {
 export interface PresetEnvio {
   id: number | null;
   nome: string;
+  /** tag fixa do preset (opcional), aplicada além da tag por envio */
+  tagFixaId?: string | null;
   /** campos adicionais conhecidos (para converter tipos); opcional */
   camposAdicionais?: DcCampoAdicional[];
   listaId: string | null;
@@ -252,10 +266,28 @@ export function montarLead(row: Row, preset: PresetEnvio): LeadMontado | { erro:
     .join("\n");
 
   const adicionais: Record<string, string | number> = {};
-  const tipos = new Map<string, string>((preset.camposAdicionais ?? []).map((f) => [f.id, f.type] as [string, string]));
+  const camposDc = preset.camposAdicionais ?? [];
+  const tipos = new Map<string, string>(camposDc.map((f) => [f.id, f.type] as [string, string]));
   for (const [fieldId, col] of Object.entries(m.adicionais ?? {})) {
     const conv = converterValorAdicional(cell(row, col), tipos.get(fieldId));
     if (conv !== null) adicionais[fieldId] = conv;
+  }
+  // Valores fixos do disparo (ex.: Origem do Lead = Disparo API).
+  for (const [fieldId, val] of Object.entries(m.fixos ?? {})) {
+    if (adicionais[fieldId] === undefined) {
+      const conv = converterValorAdicional(val, tipos.get(fieldId));
+      if (conv !== null) adicionais[fieldId] = conv;
+    }
+  }
+  // Espelhos automáticos: "Nome Lead", "CPF Lead", "Email Lead" recebem os campos padrão.
+  const valoresPadrao: Partial<Record<LeadFieldKey, string>> = {
+    name: nome,
+    taxId: cpfDigits && cpfDigits.length === 11 ? formatCpf(cpfDigits) : "",
+    email: cell(row, m.campos.email),
+  };
+  for (const f of camposDc) {
+    const esp = ESPELHOS.find((e) => e.nome === norm(f.name));
+    if (esp && adicionais[f.id] === undefined && valoresPadrao[esp.de]) adicionais[f.id] = valoresPadrao[esp.de]!;
   }
 
   const payload: Record<string, unknown> = { name: nome, phone: telefone, type: "PERSON" };
@@ -298,7 +330,7 @@ export function resolverNomeTag(padrao: string | null | undefined, arquivo: stri
   const yyyy = String(agora.getFullYear());
   const hh = String(agora.getHours()).padStart(2, "0");
   const mi = String(agora.getMinutes()).padStart(2, "0");
-  const nome = (padrao || "api_{arquivo}")
+  const nome = (padrao || "{arquivo}")
     .replace(/\{arquivo\}/gi, nomeBaseArquivo(arquivo))
     .replace(/\{data\}/gi, `${dd}${mm}${yyyy}`)
     .replace(/\{dataiso\}/gi, `${yyyy}-${mm}-${dd}`)
@@ -516,7 +548,7 @@ async function enviarLead(l: LeadMontado, preset: PresetEnvio, job: EnvioJob) {
   let lead: DcLead | null = await dcFindLeadByPhone(l.telefone);
   if (!lead && l.cpfDigits) lead = await dcFindLeadByTaxId(l.cpfDigits);
 
-  const tagIds = preset.tagId ? [preset.tagId] : [];
+  const tagIds = [...new Set([preset.tagFixaId, preset.tagId].filter((t): t is string => !!t))];
   const listIds = preset.listaId ? [preset.listaId] : [];
 
   if (!lead) {

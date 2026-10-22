@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 
 interface DcNamed { id: string; name: string }
 interface DcPipeline extends DcNamed { stages: DcNamed[] }
-interface DcCampoAdicional { id: string; name: string; type: string; required?: boolean }
+interface DcCampoAdicional { id: string; name: string; type: string; required?: boolean; options?: { label?: string; color?: string }[] | null }
 interface DcOptions { configured: boolean; error?: string; listas?: DcNamed[]; tags?: DcNamed[]; pipelines?: DcPipeline[]; campos?: DcCampoAdicional[] }
 interface Regra { coluna: string; op: "contem" | "nao_contem" | "igual" | "diferente" | "vazio" | "nao_vazio"; valor: string }
 
@@ -41,7 +41,7 @@ const COLUNAS_PADRAO = [
   "Serviço", "Velocidade Contratada", "Observações", "UF", "Cobertura", "Claro", "Nio", "Tim", "Claro Promo",
 ];
 
-interface Mapeamento { campos: Partial<Record<LeadFieldKey, string>>; adicionais: Record<string, string>; observacoes: string[] }
+interface Mapeamento { campos: Partial<Record<LeadFieldKey, string>>; adicionais: Record<string, string>; fixos?: Record<string, string>; observacoes: string[] }
 
 interface Preset {
   id: number;
@@ -74,6 +74,7 @@ interface EnvioHist {
 const SUGESTAO_PADRAO: Mapeamento = {
   campos: { name: "NOME", phone: "CONTATO", taxId: "CPF", zip: "CEP", address: "Logradouro", number: "Número", complement: "Abrev. Tipo Comp.", block: "Bairro", state: "UF" },
   adicionais: {},
+  fixos: {},
   observacoes: [],
 };
 SUGESTAO_PADRAO.observacoes = COLUNAS_PADRAO.filter((c) => !Object.values(SUGESTAO_PADRAO.campos).includes(c));
@@ -95,7 +96,7 @@ function resolverNomeTag(padrao: string | null | undefined, arquivo: string): st
   const d = new Date();
   const dd = String(d.getDate()).padStart(2, "0"), mm = String(d.getMonth() + 1).padStart(2, "0"), yyyy = String(d.getFullYear());
   const hh = String(d.getHours()).padStart(2, "0"), mi = String(d.getMinutes()).padStart(2, "0");
-  return (padrao || "api_{arquivo}")
+  return (padrao || "{arquivo}")
     .replace(/\{arquivo\}/gi, nomeBaseArquivo(arquivo)).replace(/\{data\}/gi, `${dd}${mm}${yyyy}`)
     .replace(/\{dataiso\}/gi, `${yyyy}-${mm}-${dd}`).replace(/\{hora\}/gi, `${hh}${mi}`).trim().slice(0, 100);
 }
@@ -242,6 +243,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
   const [erro, setErro] = useState("");
   const [presetId, setPresetId] = useState<string>("");
   const [destinos, setDestinos] = useState<Record<string, string>>({});
+  const [fixos, setFixos] = useState<Record<string, string>>({});
   const [salvarMapeamento, setSalvarMapeamento] = useState(true);
   const [facetas, setFacetas] = useState<Record<string, string[]>>({});
   const [regras, setRegras] = useState<Regra[]>([]);
@@ -319,17 +321,19 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
       next[h] = d;
     }
     setDestinos(next);
+    setFixos({ ...(sug.fixos ?? {}), ...(m?.fixos ?? {}) });
   }, [info, preset, camposAdicionais]);
 
   const mapeamento = useMemo<Mapeamento>(() => {
-    const m: Mapeamento = { campos: {}, adicionais: {}, observacoes: [] };
+    const m: Mapeamento = { campos: {}, adicionais: {}, fixos: {}, observacoes: [] };
     for (const [col, d] of Object.entries(destinos)) {
       if (d.startsWith("campo:")) m.campos[d.slice(6) as LeadFieldKey] = col;
       else if (d.startsWith("adicional:")) m.adicionais[d.slice(10)] = col;
       else if (d === "obs") m.observacoes.push(col);
     }
+    for (const [id, v] of Object.entries(fixos)) if (v.trim()) m.fixos![id] = v.trim();
     return m;
-  }, [destinos]);
+  }, [destinos, fixos]);
 
   const duplicados = useMemo(() => {
     const seen = new Map<string, number>();
@@ -604,7 +608,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
             <div className="mt-3 flex flex-col gap-1.5 rounded-xl bg-slate-50 p-3 text-sm">
               <Linha icon={Workflow} label="Etapa" value={preset.stageNome ? `${preset.pipelineNome ?? ""} › ${preset.stageNome}` : null} />
               <Linha icon={ListChecks} label="Lista" value={preset.listaNome} />
-              <Linha icon={Tag} label="Tag" value={preset.tagModo === "por_envio" ? `nova a cada envio (${preset.tagPadrao || "api_{arquivo}"})` : preset.tagNome} />
+              <Linha icon={Tag} label="Tag" value={[preset.tagNome, preset.tagModo === "por_envio" ? `+ tag da base (${preset.tagPadrao || "{arquivo}"})` : null].filter(Boolean).join(" ") || null} />
             </div>
           )}
           {options && !options.configured && (
@@ -652,6 +656,36 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
                 </tbody>
               </table>
             </div>
+            {camposAdicionais.length > 0 && (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Valores fixos para todos os leads deste envio</p>
+                <p className="mb-2 text-xs text-slate-500">Campos adicionais preenchidos com o mesmo valor em todos os leads (ex.: Origem do Lead = Disparo API, Parceiro). Nome Lead / CPF Lead / Email Lead são preenchidos automaticamente a partir dos campos padrão.</p>
+                <div className="flex flex-col gap-2">
+                  {Object.entries(fixos).map(([id, v]) => {
+                    const campo = camposAdicionais.find((c) => c.id === id);
+                    const opts = (campo as { options?: { label?: string }[] } | undefined)?.options;
+                    return (
+                      <div key={id} className="flex items-center gap-2">
+                        <span className="w-44 truncate text-sm text-slate-700" title={campo?.name ?? id}>{campo?.name ?? id}</span>
+                        {Array.isArray(opts) && opts.length > 0 ? (
+                          <select className={cn(selectCls, "max-w-xs")} value={v} onChange={(e) => setFixos((f) => ({ ...f, [id]: e.target.value }))}>
+                            <option value="">— sem valor —</option>
+                            {opts.map((o, i) => <option key={i} value={o.label ?? ""}>{o.label}</option>)}
+                          </select>
+                        ) : (
+                          <Input className="h-8 max-w-xs" value={v} onChange={(e) => setFixos((f) => ({ ...f, [id]: e.target.value }))} />
+                        )}
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setFixos((f) => { const n = { ...f }; delete n[id]; return n; })}><Trash2 className="size-4" /></Button>
+                      </div>
+                    );
+                  })}
+                  <select className={cn(selectCls, "max-w-xs")} value="" onChange={(e) => { const id = e.target.value; if (id) setFixos((f) => ({ ...f, [id]: f[id] ?? "" })); }}>
+                    <option value="">+ adicionar valor fixo...</option>
+                    {camposAdicionais.filter((c) => fixos[c.id] === undefined).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm">
               <label className="flex items-center gap-2 text-slate-700">
                 <input type="checkbox" checked={salvarMapeamento} onChange={(e) => setSalvarMapeamento(e.target.checked)} />
@@ -871,7 +905,8 @@ function DisparosTab({ presets, loading, options, onChanged, onOptionsChanged }:
               {p.descricao && <p className="text-sm text-slate-500">{p.descricao}</p>}
               <div className="mt-1 flex flex-wrap gap-1.5 text-xs">
                 {p.listaNome && <Chip icon={ListChecks} text={`Lista: ${p.listaNome}`} />}
-                {p.tagModo === "por_envio" ? <Chip icon={Tag} text={`Tag por envio: ${p.tagPadrao || "api_{arquivo}"}`} /> : p.tagNome && <Chip icon={Tag} text={`Tag: ${p.tagNome}`} />}
+                {p.tagNome && <Chip icon={Tag} text={`Tag fixa: ${p.tagNome}`} />}
+                {p.tagModo === "por_envio" && <Chip icon={Tag} text={`Tag por envio: ${p.tagPadrao || "{arquivo}"}`} />}
                 {p.stageNome && <Chip icon={Workflow} text={`${p.pipelineNome ?? ""} › ${p.stageNome}`} />}
                 {p.filtroColuna && <Chip icon={Filter} text={`${p.filtroColuna} = ${p.filtroValor || "(preenchido)"}`} />}
               </div>
@@ -899,7 +934,7 @@ function PresetForm({ inicial, options, onCancel, onSaved, onOptionsChanged }: {
   const [listaId, setListaId] = useState(inicial?.listaId ?? "");
   const [tagId, setTagId] = useState(inicial?.tagId ?? "");
   const [tagModo, setTagModo] = useState<"fixa" | "por_envio">(inicial?.tagModo ?? "por_envio");
-  const [tagPadrao, setTagPadrao] = useState(inicial?.tagPadrao ?? "api_{arquivo}");
+  const [tagPadrao, setTagPadrao] = useState(inicial?.tagPadrao ?? "{arquivo}");
   const [pipelineId, setPipelineId] = useState(inicial?.pipelineId ?? "");
   const [stageId, setStageId] = useState(inicial?.stageId ?? "");
   const [origem, setOrigem] = useState(inicial?.origem ?? "Disparo MCC");
@@ -908,6 +943,7 @@ function PresetForm({ inicial, options, onCancel, onSaved, onOptionsChanged }: {
   const [campos, setCampos] = useState<Partial<Record<LeadFieldKey, string>>>(inicial?.mapeamento.campos ?? SUGESTAO_PADRAO.campos);
   const [observacoes, setObservacoes] = useState<string[]>(inicial?.mapeamento.observacoes ?? SUGESTAO_PADRAO.observacoes);
   const adicionais = inicial?.mapeamento.adicionais ?? {};
+  const fixosSalvos = inicial?.mapeamento.fixos ?? {};
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
   const [novoNome, setNovoNome] = useState("");
@@ -952,11 +988,11 @@ function PresetForm({ inicial, options, onCancel, onSaved, onOptionsChanged }: {
         nome, descricao,
         listaId: listaId || null, listaNome: listaOpts.find((l) => l.id === listaId)?.name ?? null,
         tagModo, tagPadrao,
-        tagId: tagModo === "fixa" ? tagId || null : null, tagNome: tagModo === "fixa" ? tagOpts.find((t) => t.id === tagId)?.name ?? null : null,
+        tagId: tagId || null, tagNome: tagOpts.find((t) => t.id === tagId)?.name ?? null,
         pipelineId: pipelineId || null, pipelineNome: pipeline?.name ?? null,
         stageId: stageId || null, stageNome: stages.find((s) => s.id === stageId)?.name ?? null,
         origem, filtroColuna: filtroColuna || null, filtroValor: filtroValor || null,
-        mapeamento: { campos, adicionais, observacoes },
+        mapeamento: { campos, adicionais, fixos: fixosSalvos, observacoes },
       };
       const res = await fetch(inicial ? `/api/mcc/admin/disparos/presets/${inicial.id}` : "/api/mcc/admin/disparos/presets", {
         method: inicial ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
@@ -997,28 +1033,27 @@ function PresetForm({ inicial, options, onCancel, onSaved, onOptionsChanged }: {
               <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" onClick={() => { setCriandoTipo("lista"); setNovoNome(""); }} disabled={!options?.configured}><Plus className="size-4" /> Nova</Button>
             </div>
           </Campo>
-          <div className="flex flex-col gap-2">
-            <span className="text-xs font-medium text-slate-600">Tag</span>
-            <div className="flex gap-4 text-sm">
-              <label className="flex items-center gap-1.5"><input type="radio" checked={tagModo === "por_envio"} onChange={() => setTagModo("por_envio")} /> Nova tag a cada envio</label>
-              <label className="flex items-center gap-1.5"><input type="radio" checked={tagModo === "fixa"} onChange={() => setTagModo("fixa")} /> Tag fixa</label>
+          <Campo label="Tag fixa (opcional — ex.: LEAD_COM_CPF, aplicada em todo envio)">
+            <div className="flex gap-2">
+              <select className={selectCls} value={tagId} onChange={(e) => setTagId(e.target.value)}>
+                <option value="">— nenhuma —</option>
+                {tagOpts.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+              <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" onClick={() => { setCriandoTipo("tag"); setNovoNome(""); }} disabled={!options?.configured}><Plus className="size-4" /> Nova</Button>
             </div>
-            {tagModo === "por_envio" ? (
+          </Campo>
+          <div className="flex flex-col gap-2">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={tagModo === "por_envio"} onChange={(e) => setTagModo(e.target.checked ? "por_envio" : "fixa")} />
+              Criar uma tag nova a cada envio (tag da base)
+            </label>
+            {tagModo === "por_envio" && (
               <>
-                <Input value={tagPadrao} onChange={(e) => setTagPadrao(e.target.value)} placeholder="api_{arquivo}" />
+                <Input value={tagPadrao} onChange={(e) => setTagPadrao(e.target.value)} placeholder="{arquivo}" />
                 <p className="text-xs text-slate-500">
-                  Padrão do nome. Use <code>{"{arquivo}"}</code> (nome da planilha), <code>{"{data}"}</code> (DDMMAAAA), <code>{"{dataiso}"}</code> ou <code>{"{hora}"}</code>.
-                  Ex.: <code>api_{"{arquivo}"}</code> → <code>api_OP_TOTAL_16102026</code>. Você ainda pode ajustar o nome na hora do envio.
+                  Padrão do nome. <code>{"{arquivo}"}</code> = nome da planilha (ex.: <code>nio_inadimplente_2110</code>), <code>{"{data}"}</code> = DDMMAAAA, <code>{"{dataiso}"}</code>, <code>{"{hora}"}</code>. Dá para ajustar na hora do envio.
                 </p>
               </>
-            ) : (
-              <div className="flex gap-2">
-                <select className={selectCls} value={tagId} onChange={(e) => setTagId(e.target.value)}>
-                  <option value="">— escolha —</option>
-                  {tagOpts.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-                <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" onClick={() => { setCriandoTipo("tag"); setNovoNome(""); }} disabled={!options?.configured}><Plus className="size-4" /> Nova</Button>
-              </div>
             )}
           </div>
           {criandoTipo && (

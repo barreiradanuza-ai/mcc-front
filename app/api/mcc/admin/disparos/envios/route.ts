@@ -46,9 +46,9 @@ export async function POST(req: Request) {
   const p = await prisma.disparoPreset.findUnique({ where: { id: presetId } });
   if (!p) return NextResponse.json({ error: "Disparo não encontrado" }, { status: 404 });
 
-  // Tag: fixa (do preset) ou criada por envio (nome vindo da tela ou do padrão do preset).
-  let tagId = p.tagId;
-  let tagNome = p.tagNome;
+  // Tag fixa do preset (opcional) + tag por envio (nome vindo da tela ou do padrão do preset).
+  let tagId: string | null = null;
+  let tagNome: string | null = null;
   if (p.tagModo === "por_envio") {
     const nome = (lida.extra.tagNome || "").trim() || resolverNomeTag(p.tagPadrao, lida.arquivo);
     if (!nome) return NextResponse.json({ error: "Informe o nome da tag deste envio" }, { status: 400 });
@@ -104,8 +104,9 @@ export async function POST(req: Request) {
     nome: p.nome,
     camposAdicionais,
     listaId: p.listaId,
+    tagFixaId: p.tagId,
     tagId,
-    tagNome,
+    tagNome: tagNome ?? p.tagNome,
     stageId: p.stageId,
     origem: p.origem,
     // Quando a tela manda a seleção de linhas, o filtro do preset não se aplica de novo.
