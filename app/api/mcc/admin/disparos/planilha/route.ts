@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { ensureMccSession } from "@/lib/mcc/authz";
 import { datacrazyConfigured, type DcCampoAdicional } from "@/lib/mcc/datacrazy";
 import { getDcOptionsCached } from "@/lib/mcc/dcCache";
-import { parseMapeamento, sugerirMapeamento } from "@/lib/mcc/disparos";
+import { consultarEnviados, parseMapeamento, sugerirMapeamento } from "@/lib/mcc/disparos";
 import { lerPlanilhaDaRequisicao } from "@/lib/mcc/disparosPlanilha";
 
 export const runtime = "nodejs";
@@ -40,12 +40,21 @@ export async function POST(req: Request) {
   }
 
   const rows = lida.rows.slice(0, MAX_LINHAS);
+  const sugestao = sugerirMapeamento(lida.headers, campos, base);
+  // Quais linhas já foram enviadas ao DataCrazy (pelo telefone/CPF das colunas sugeridas).
+  let enviadoEm: (string | null)[] = rows.map(() => null);
+  try {
+    enviadoEm = await consultarEnviados(rows, sugestao.campos.phone, sugestao.campos.taxId);
+  } catch (e) {
+    console.warn("[disparos] consulta de enviados falhou:", e instanceof Error ? e.message : e);
+  }
   return NextResponse.json({
     arquivo: lida.arquivo,
     headers: lida.headers,
     total: lida.rows.length,
     truncado: lida.rows.length > MAX_LINHAS,
     rows,
-    sugestao: sugerirMapeamento(lida.headers, campos, base),
+    enviadoEm,
+    sugestao,
   });
 }

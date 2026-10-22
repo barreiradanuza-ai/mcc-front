@@ -152,3 +152,19 @@ model DisparoEnvio {
 
   @@map("disparo_envios")
 }
+
+/// Leads já enviados ao DataCrazy (evita reenviar o mesmo lead em importações futuras).
+model DisparoLeadEnviado {
+  id          Int      @id @default(autoincrement())
+  telefone    String   @db.VarChar(16)
+  cpf         String?  @db.VarChar(11)
+  dcLeadId    String?  @map("dc_lead_id") @db.VarChar(80)
+  envioId     Int?     @map("envio_id")
+  presetNome  String?  @map("preset_nome") @db.VarChar(120)
+  tagNome     String?  @map("tag_nome") @db.VarChar(160)
+  enviadoEm   DateTime @default(now()) @map("enviado_em") @db.Timestamptz()
+
+  @@unique([telefone])
+  @@index([cpf])
+  @@map("disparo_leads_enviados")
+}

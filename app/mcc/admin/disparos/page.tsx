@@ -57,7 +57,8 @@ interface Preset {
   mapeamento: Mapeamento;
 }
 
-interface PlanilhaInfo { arquivo: string; headers: string[]; total: number; truncado: boolean; rows: Record<string, unknown>[]; sugestao: Mapeamento }
+interface PlanilhaInfo { arquivo: string; headers: string[]; total: number; truncado: boolean; rows: Record<string, unknown>[]; enviadoEm: (string | null)[]; sugestao: Mapeamento }
+const COL_ENVIADO = "Enviado DataCrazy";
 
 interface EnvioStatus {
   id: number; status: string; progressMsg: string; tagNome?: string | null; processed: number; total: number;
@@ -270,8 +271,13 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
       const res = await fetch("/api/mcc/admin/disparos/planilha", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) { setErro(data.error || "Não foi possível ler a planilha"); if (jid) setJobId(null); return; }
-      setInfo(data);
-      setFacetas({}); setRegras([]); setBusca(""); setExcluidos(new Set()); setPagina(0);
+      const enviadoEm: (string | null)[] = data.enviadoEm ?? [];
+      const rows = (data.rows as Record<string, unknown>[]).map((r, i) => ({ ...r, [COL_ENVIADO]: enviadoEm[i] ? `Sim (${new Date(enviadoEm[i]!).toLocaleDateString("pt-BR")})` : "Não" }));
+      const headers = [...(data.headers as string[]).filter((h) => h !== COL_ENVIADO), COL_ENVIADO];
+      setInfo({ ...data, rows, headers, enviadoEm });
+      setFacetas({}); setRegras([]); setBusca(""); setPagina(0);
+      // Quem já foi enviado começa desmarcado, para não duplicar no DataCrazy.
+      setExcluidos(new Set(enviadoEm.map((v, i) => (v ? i : -1)).filter((i) => i >= 0)));
     } catch {
       setErro("Falha ao ler a planilha");
     } finally {
@@ -306,6 +312,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
     };
     const usados = new Set<string>();
     for (const h of info.headers) {
+      if (h === COL_ENVIADO) { next[h] = "ignorar"; continue; }
       let d = pick(m, h) ?? pick(sug, h) ?? "obs";
       if (d !== "obs" && d !== "ignorar" && usados.has(d)) d = "obs";
       usados.add(d);
@@ -343,7 +350,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
     if (!info) return out;
     for (const h of info.headers) {
       const cnt = new Map<string, number>();
-      for (const r of info.rows) { const v = String(r[h] ?? "").trim(); cnt.set(v, (cnt.get(v) ?? 0) + 1); if (cnt.size > 16) break; }
+      for (const r of info.rows) { let v = String(r[h] ?? "").trim(); if (h === COL_ENVIADO) v = v.startsWith("Sim") ? "Sim" : "Não"; cnt.set(v, (cnt.get(v) ?? 0) + 1); if (cnt.size > 16) break; }
       if (cnt.size <= 16 && cnt.size > 1) out[h] = [...cnt.entries()].map(([valor, qtd]) => ({ valor, qtd })).sort((a, b) => b.qtd - a.qtd);
     }
     return out;
@@ -351,7 +358,8 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
 
   // Filtro do preset vira uma faceta/regra inicial.
   useEffect(() => {
-    setFacetas({}); setRegras([]); setExcluidos(new Set());
+    setFacetas({}); setRegras([]);
+    setExcluidos(new Set((info?.enviadoEm ?? []).map((v, i) => (v ? i : -1)).filter((i) => i >= 0)));
     if (!info || !preset?.filtroColuna) return;
     const alvo = preset.filtroColuna.trim().toLowerCase();
     const col = info.headers.find((h) => h.trim().toLowerCase() === alvo);
@@ -368,7 +376,9 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
     const out: number[] = [];
     info.rows.forEach((r, i) => {
       for (const [col, vals] of Object.entries(facetas)) {
-        if (vals.length && !vals.some((v) => nrm(v) === nrm(String(r[col] ?? "")))) return;
+        let cv = String(r[col] ?? "");
+        if (col === COL_ENVIADO) cv = cv.startsWith("Sim") ? "Sim" : "Não";
+        if (vals.length && !vals.some((v) => nrm(v) === nrm(cv))) return;
       }
       for (const rg of regras) {
         const v = nrm(String(r[rg.coluna] ?? ""));
@@ -402,8 +412,8 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
   const colunasGrade = useMemo(() => {
     if (!info) return [] as string[];
     const prior = [mapeamento.campos.name, mapeamento.campos.phone].filter((c): c is string => !!c);
-    const resto = info.headers.filter((h) => !prior.includes(h));
-    return [...prior, ...resto].slice(0, 8);
+    const resto = info.headers.filter((h) => !prior.includes(h) && h !== COL_ENVIADO);
+    return [COL_ENVIADO, ...prior, ...resto].slice(0, 9);
   }, [info, mapeamento]);
 
   const POR_PAGINA = 50;
@@ -522,13 +532,19 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
               Os leads já estão no DataCrazy{preset?.listaNome ? ` na lista "${preset.listaNome}"` : ""}{envio.tagNome ? ` com a tag "${envio.tagNome}"` : ""}{preset?.stageNome ? ` na etapa "${preset.stageNome}"` : ""}. Agora é só iniciar o Impulso lá.
             </p>
           )}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {emAndamento ? (
               <Button variant="outline" onClick={cancelar}><XCircle className="size-4" /> Cancelar envio</Button>
             ) : (
-              <Button variant="outline" onClick={reset}><Upload className="size-4" /> Enviar outra planilha</Button>
+              <>
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={async () => { const r = await fetch(`/api/mcc/admin/disparos/envios/${envio.id}/planilha`); if (r.ok) downloadBlob(await r.blob(), `envio_${envio.id}_enviado_datacrazy.xlsx`); else setErro("Planilha do envio não está mais disponível"); }}>
+                  <Download className="size-4" /> Baixar planilha com coluna &quot;Enviado DataCrazy&quot;
+                </Button>
+                <Button variant="outline" onClick={reset}><Upload className="size-4" /> Enviar outra planilha</Button>
+              </>
             )}
           </div>
+          {erro && <span className="text-sm text-red-700">{erro}</span>}
         </div>
       </div>
     );
@@ -607,7 +623,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
                   <tr><th className="px-3 py-2 text-left">Coluna da planilha</th><th className="px-3 py-2 text-left">Exemplo</th><th className="px-3 py-2 text-left">Destino no DataCrazy</th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {info.headers.map((h) => {
+                  {info.headers.filter((h) => h !== COL_ENVIADO).map((h) => {
                     const d = destinos[h] ?? "obs";
                     const dup = duplicados.includes(d);
                     return (
@@ -698,6 +714,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
                 <span className="font-semibold text-slate-700">
                   <span className="text-mcc-blue">{selecionados.length.toLocaleString("pt-BR")}</span> de {info.total.toLocaleString("pt-BR")} linhas selecionadas
                   {filtrados.length !== info.total && <span className="text-slate-500"> · {filtrados.length.toLocaleString("pt-BR")} passam no filtro</span>}
+                  {info.enviadoEm.some(Boolean) && <span className="text-amber-700"> · {info.enviadoEm.filter(Boolean).length.toLocaleString("pt-BR")} já enviadas antes (desmarcadas)</span>}
                 </span>
                 <div className="flex items-center gap-2">
                   <button type="button" className="text-mcc-blue hover:underline" onClick={() => setExcluidos((ex) => { const n = new Set(ex); for (const i of filtrados) n.delete(i); return n; })}>marcar todas filtradas</button>

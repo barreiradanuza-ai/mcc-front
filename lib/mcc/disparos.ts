@@ -344,7 +344,15 @@ export interface EnvioJob {
   erros: ErroLinha[];
   cancel: boolean;
   createdAt: number;
+  /** status por linha (índice na planilha original): enviado | falha | filtro */
+  linhaStatus: Map<number, "enviado" | "falha" | "filtro">;
+  /** índices originais das linhas enviadas (para a planilha de resultado) */
+  indices: number[];
+  /** planilha original (cabeçalhos + linhas) para gerar a planilha com a coluna "Enviado DataCrazy" */
+  planilha: { headers: string[]; rows: Row[] } | null;
 }
+
+export const COLUNA_ENVIADO = "Enviado DataCrazy";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -382,7 +390,12 @@ function cleanup() {
 // Execução
 // ---------------------------------------------------------------------------
 
-export async function iniciarEnvio(rows: Row[], arquivo: string, preset: PresetEnvio): Promise<EnvioJob> {
+export async function iniciarEnvio(
+  rows: Row[],
+  arquivo: string,
+  preset: PresetEnvio,
+  origem?: { headers: string[]; rows: Row[]; indices: number[] },
+): Promise<EnvioJob> {
   cleanup();
   const registro = await prisma.disparoEnvio.create({
     data: {
@@ -408,6 +421,9 @@ export async function iniciarEnvio(rows: Row[], arquivo: string, preset: PresetE
     erros: [],
     cancel: false,
     createdAt: Date.now(),
+    linhaStatus: new Map(),
+    indices: origem?.indices ?? rows.map((_, i) => i),
+    planilha: origem ? { headers: origem.headers, rows: origem.rows } : { headers: Object.keys(rows[0] ?? {}), rows },
   };
   store().set(job.id, job);
   void executar(job, rows, preset);
@@ -449,17 +465,20 @@ async function executar(job: EnvioJob, rows: Row[], preset: PresetEnvio) {
       }
 
       const row = rows[i];
-      const linha = i + 2; // linha na planilha (1 = cabeçalho)
+      const idxOriginal = job.indices[i] ?? i;
+      const linha = idxOriginal + 2; // linha na planilha (1 = cabeçalho)
       job.processed = i + 1;
 
       if (!passaFiltro(row, preset)) {
         job.filtrados++;
+        job.linhaStatus.set(idxOriginal, "filtro");
         continue;
       }
 
       const montado = montarLead(row, preset);
       if ("erro" in montado) {
         job.falhas++;
+        job.linhaStatus.set(idxOriginal, "falha");
         job.erros.push({ linha, nome: cell(row, preset.mapeamento.campos.name), telefone: cell(row, preset.mapeamento.campos.phone), erro: montado.erro });
         continue;
       }
@@ -468,8 +487,10 @@ async function executar(job: EnvioJob, rows: Row[], preset: PresetEnvio) {
 
       try {
         await enviarLead(montado, preset, job);
+        job.linhaStatus.set(idxOriginal, "enviado");
       } catch (e) {
         job.falhas++;
+        job.linhaStatus.set(idxOriginal, "falha");
         job.erros.push({ linha, nome: montado.nome, telefone: montado.telefone, erro: e instanceof Error ? e.message : String(e) });
       }
 
@@ -539,4 +560,66 @@ async function enviarLead(l: LeadMontado, preset: PresetEnvio, job: EnvioJob) {
     const ja = await dcLeadHasBusinessInStage(lead.id, preset.stageId);
     if (!ja) await dcCreateBusiness(lead.id, preset.stageId, l.cpfDigits ? `mcc-${l.cpfDigits}-${preset.id ?? 0}` : undefined);
   }
+
+  // 4) Registra como enviado (controle de duplicidade nas próximas importações).
+  try {
+    const telefone = onlyDigits(l.telefone);
+    await prisma.disparoLeadEnviado.upsert({
+      where: { telefone },
+      create: { telefone, cpf: l.cpfDigits, dcLeadId: lead.id, envioId: job.id, presetNome: preset.nome, tagNome: preset.tagNome ?? null },
+      update: { cpf: l.cpfDigits ?? undefined, dcLeadId: lead.id, envioId: job.id, presetNome: preset.nome, tagNome: preset.tagNome ?? null, enviadoEm: new Date() },
+    });
+  } catch (e) {
+    console.warn(`[envio:${job.id}] não registrou lead enviado:`, e instanceof Error ? e.message : e);
+  }
 }
+
+// ---------------------------------------------------------------------------
+// Consulta de "já enviado"
+// ---------------------------------------------------------------------------
+
+/**
+ * Para cada linha, devolve a data do último envio ao DataCrazy (ou null),
+ * procurando pelo telefone e pelo CPF das colunas informadas.
+ */
+export async function consultarEnviados(
+  rows: Row[],
+  colTelefone: string | undefined,
+  colCpf: string | undefined,
+): Promise<(string | null)[]> {
+  const tels = rows.map((r) => (colTelefone ? onlyDigits(toE164BR(cell(r, colTelefone)) ?? "") : ""));
+  const cpfs = rows.map((r) => (colCpf ? onlyDigits(cell(r, colCpf)).padStart(11, "0").slice(-11) : ""));
+  const telSet = [...new Set(tels.filter(Boolean))];
+  const cpfSet = [...new Set(cpfs.filter((c) => c.length === 11))];
+  const porTel = new Map<string, string>();
+  const porCpf = new Map<string, string>();
+  const chunk = 1000;
+  for (let i = 0; i < telSet.length; i += chunk) {
+    const found = await prisma.disparoLeadEnviado.findMany({ where: { telefone: { in: telSet.slice(i, i + chunk) } }, select: { telefone: true, enviadoEm: true } });
+    for (const f of found) porTel.set(f.telefone, f.enviadoEm.toISOString());
+  }
+  for (let i = 0; i < cpfSet.length; i += chunk) {
+    const found = await prisma.disparoLeadEnviado.findMany({ where: { cpf: { in: cpfSet.slice(i, i + chunk) } }, select: { cpf: true, enviadoEm: true } });
+    for (const f of found) if (f.cpf) porCpf.set(f.cpf, f.enviadoEm.toISOString());
+  }
+  return rows.map((_, i) => porTel.get(tels[i]) ?? porCpf.get(cpfs[i]) ?? null);
+}
+
+const fmtDataBR = (iso: string) => {
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+};
+
+/** Planilha original + coluna "Enviado DataCrazy" com o resultado de um envio. */
+export function planilhaComResultado(job: EnvioJob): { headers: string[]; rows: Row[] } | null {
+  if (!job.planilha) return null;
+  const headers = [...job.planilha.headers.filter((h) => h !== COLUNA_ENVIADO), COLUNA_ENVIADO];
+  const rows = job.planilha.rows.map((r, i) => {
+    const st = job.linhaStatus.get(i);
+    const valor = st === "enviado" ? "Sim" : st === "falha" ? "Falha" : st === "filtro" ? "Fora do filtro" : "Não selecionado";
+    return { ...r, [COLUNA_ENVIADO]: valor };
+  });
+  return { headers, rows };
+}
+
+export { fmtDataBR };

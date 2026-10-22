@@ -6,6 +6,7 @@ import { normalizeCpf, normalizeCep } from "@/lib/mcc/admin";
 import { buildCoverageString, resolveClaroPromoCeps } from "@/lib/mcc/coverage";
 import { normalizePhone, checkWhatsAppBulk } from "@/lib/mcc/validators/whatsappChecker";
 import { createJob, updateJob } from "@/lib/mcc/jobStore";
+import { COLUNA_ENVIADO, consultarEnviados, fmtDataBR } from "@/lib/mcc/disparos";
 import { ensureMccSession } from "@/lib/mcc/authz";
 import { randomUUID } from "crypto";
 
@@ -223,6 +224,14 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
         const result = await prisma.cpfCobertura.createMany({ data: chunk, skipDuplicates: true });
         newCpfsSaved += result.count;
       }
+    }
+
+    // Marca quem já foi enviado ao DataCrazy (controle de duplicidade entre importações).
+    try {
+      const enviados = await consultarEnviados(outputRows, contatoCol, cpfCol);
+      outputRows.forEach((r, i) => { r[COLUNA_ENVIADO] = enviados[i] ? `Sim (${fmtDataBR(enviados[i]!)})` : ""; });
+    } catch (e) {
+      console.warn(`[job:${jobId}] consulta de enviados ao DataCrazy falhou:`, e instanceof Error ? e.message : e);
     }
 
     const newSheet = XLSX.utils.json_to_sheet(outputRows);

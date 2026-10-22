@@ -78,12 +78,14 @@ export async function POST(req: Request) {
 
   // Seleção de linhas (índices na planilha, base 0). Sem "linhas", envia todas.
   let rows = lida.rows;
+  let indices = lida.rows.map((_, i) => i);
   if (lida.extra.linhas) {
     try {
       const idx = JSON.parse(lida.extra.linhas) as unknown;
       if (!Array.isArray(idx)) throw new Error();
       const set = new Set(idx.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0 && n < lida.rows.length));
-      rows = lida.rows.filter((_, i) => set.has(i));
+      indices = lida.rows.map((_, i) => i).filter((i) => set.has(i));
+      rows = indices.map((i) => lida.rows[i]);
     } catch {
       return NextResponse.json({ error: "Seleção de linhas inválida" }, { status: 400 });
     }
@@ -125,6 +127,6 @@ export async function POST(req: Request) {
     );
   }
 
-  const job = await iniciarEnvio(rows, lida.arquivo, preset);
+  const job = await iniciarEnvio(rows, lida.arquivo, preset, { headers: lida.headers, rows: lida.rows, indices });
   return NextResponse.json({ id: job.id, total: job.total, tagNome: job.tagNome }, { status: 202 });
 }
