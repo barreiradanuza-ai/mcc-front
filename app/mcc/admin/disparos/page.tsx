@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Loader2, Pencil, Plus, RefreshCw, Rocket, Send,
@@ -1194,9 +1194,68 @@ function Campo({ label, children }: { label: string; children: ReactNode }) {
 // Aba: Histórico
 // ---------------------------------------------------------------------------
 
+interface Resultado {
+  tagNome: string; tagId: string | null; enviados: number | null; negocios: number; leads: number; mensagensEnviadas: number;
+  responderam: number; avancaram: number; vendas: number; instalados: number; perdidos: number; valorVendas: number;
+  porEtapa: { funil: string; etapa: string; qtd: number; grupo: "entrada" | "andamento" | "venda" | "perda" }[]; atualizadoEm: string;
+}
+
+function RetornoPanel({ envioId }: { envioId: number }) {
+  const [r, setR] = useState<Resultado | null>(null);
+  const [erro, setErro] = useState("");
+  const [loading, setLoading] = useState(false);
+  const load = useCallback(async (refresh = false) => {
+    setLoading(true); setErro("");
+    try {
+      const res = await fetch(`/api/mcc/admin/disparos/resultados?envioId=${envioId}${refresh ? "&refresh=1" : ""}`);
+      const data = await res.json();
+      if (!res.ok) { setErro(data.error || "Falha ao consultar"); return; }
+      setR(data);
+    } catch { setErro("Falha ao consultar o DataCrazy"); } finally { setLoading(false); }
+  }, [envioId]);
+  useEffect(() => { void load(); }, [load]);
+
+  if (loading && !r) return <div className="flex items-center gap-2 px-4 py-3 text-sm text-slate-500"><Loader2 className="size-4 animate-spin" /> Consultando o DataCrazy (pode levar alguns segundos)...</div>;
+  if (erro) return <div className="px-4 py-3 text-sm text-red-700">{erro}</div>;
+  if (!r) return null;
+  const base = r.leads || 1;
+  const pct = (n: number) => `${Math.round((n / base) * 100)}%`;
+  const grupoCls: Record<string, string> = { entrada: "text-slate-600", andamento: "text-sky-700", venda: "text-emerald-700", perda: "text-red-700" };
+  return (
+    <div className="flex flex-col gap-3 bg-slate-50/60 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+        <span>Tag <b className="text-slate-700">{r.tagNome}</b> · {r.leads.toLocaleString("pt-BR")} leads no DataCrazy{r.enviados != null ? ` (${r.enviados.toLocaleString("pt-BR")} neste envio)` : ""} · atualizado {fmtData(r.atualizadoEm)}</span>
+        <button type="button" className="flex items-center gap-1 text-mcc-blue hover:underline" onClick={() => load(true)}><RefreshCw className={cn("size-3.5", loading && "animate-spin")} /> atualizar</button>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <Stat label="Mensagem enviada" value={r.mensagensEnviadas} cls="text-slate-700 bg-white border-slate-200" />
+        <Stat label={`Responderam (${pct(r.responderam)})`} value={r.responderam} cls="text-sky-700 bg-sky-50 border-sky-200" />
+        <Stat label={`Avançaram (${pct(r.avancaram)})`} value={r.avancaram} cls="text-indigo-700 bg-indigo-50 border-indigo-200" />
+        <Stat label={`Vendas (${pct(r.vendas)})`} value={r.vendas} cls="text-emerald-700 bg-emerald-50 border-emerald-200" />
+        <Stat label="Instalados" value={r.instalados} cls="text-emerald-800 bg-emerald-100 border-emerald-300" />
+        <Stat label="Perdidos" value={r.perdidos} cls="text-red-700 bg-red-50 border-red-200" />
+      </div>
+      {r.valorVendas > 0 && <p className="text-xs text-slate-600">Valor em vendas: <b>{r.valorVendas.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</b></p>}
+      {r.porEtapa.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-1.5 text-left">Funil</th><th className="px-3 py-1.5 text-left">Etapa</th><th className="px-3 py-1.5 text-right">Leads</th><th className="px-3 py-1.5 text-right">%</th></tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {r.porEtapa.map((e) => (
+                <tr key={`${e.funil}|${e.etapa}`}><td className="px-3 py-1 text-slate-500">{e.funil}</td><td className={cn("px-3 py-1 font-medium", grupoCls[e.grupo])}>{e.etapa}</td><td className="px-3 py-1 text-right">{e.qtd}</td><td className="px-3 py-1 text-right text-slate-500">{pct(e.qtd)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HistoricoTab() {
   const [envios, setEnvios] = useState<EnvioHist[]>([]);
   const [loading, setLoading] = useState(true);
+  const [aberto, setAberto] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1256,7 +1315,8 @@ function HistoricoTab() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {envios.map((e) => (
-                <tr key={e.id} className="hover:bg-slate-50/50">
+                <Fragment key={e.id}>
+                <tr className="hover:bg-slate-50/50">
                   <td className="whitespace-nowrap px-4 py-2 text-slate-600">{fmtData(e.createdAt)}</td>
                   <td className="px-4 py-2 font-medium text-slate-800">{e.presetNome}</td>
                   <td className="max-w-[220px] truncate px-4 py-2 text-slate-600" title={e.arquivo}>{e.arquivo}</td>
@@ -1267,12 +1327,19 @@ function HistoricoTab() {
                   <td className="px-4 py-2 text-right text-sky-700">{e.atualizados}</td>
                   <td className="px-4 py-2 text-right text-slate-500">{e.filtrados}</td>
                   <td className="px-4 py-2 text-right text-red-700">{e.falhas}</td>
-                  <td className="px-4 py-2 text-right">
+                  <td className="whitespace-nowrap px-4 py-2 text-right">
+                    {e.tagNome && (
+                      <button type="button" onClick={() => setAberto(aberto === e.id ? null : e.id)} className="mr-3 text-xs text-mcc-blue hover:underline">{aberto === e.id ? "fechar" : "ver retorno"}</button>
+                    )}
                     {e.falhas > 0 && (
                       <button type="button" onClick={() => baixarFalhas(e.id)} className="text-xs text-mcc-blue hover:underline"><Download className="inline size-3.5" /> falhas</button>
                     )}
                   </td>
                 </tr>
+                {aberto === e.id && (
+                  <tr><td colSpan={11} className="p-0"><RetornoPanel envioId={e.id} /></td></tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
