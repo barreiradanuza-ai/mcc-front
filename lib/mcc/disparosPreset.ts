@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { COLUNAS_PADRAO, parseMapeamento, sugerirMapeamento, validarMapeamento } from "@/lib/mcc/disparos";
-import { datacrazyConfigured, dcCamposAdicionais, dcPipelines, dcTags } from "@/lib/mcc/datacrazy";
+import { datacrazyConfigured, dcCamposAdicionais, dcFlows, dcPipelines, dcTags } from "@/lib/mcc/datacrazy";
 import type { Prisma } from "@/lib/generated/prisma/client";
 
 export const PRESET_PADRAO_NOME = "Disparo API — Qualificação";
@@ -10,6 +10,7 @@ const ETAPAS_PADRAO = ["lead api", "disparo api", "disparo"];
 const TAG_FIXA_PADRAO = "lead_com_cpf";
 const ORIGEM_LEAD_CAMPO = "origem do lead";
 const ORIGEM_LEAD_VALOR = "Disparo API";
+const FLOW_PADRAO = "disparo casa conecta (com cep)";
 
 const normName = (v: unknown) =>
   String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -26,6 +27,7 @@ export async function garantirPresetPadrao(): Promise<void> {
 
   let pipelineId: string | null = null, pipelineNome: string | null = null, stageId: string | null = null, stageNome: string | null = null;
   let tagId: string | null = null, tagNome: string | null = null;
+  let flowId: string | null = null, flowNome: string | null = null;
   const fixos: Record<string, string> = {};
   if (datacrazyConfigured()) {
     try {
@@ -46,6 +48,11 @@ export async function garantirPresetPadrao(): Promise<void> {
       const origem = (await dcCamposAdicionais()).find((f) => normName(f.name) === ORIGEM_LEAD_CAMPO);
       if (origem) fixos[origem.id] = ORIGEM_LEAD_VALOR;
     } catch { /* sem campo de origem */ }
+    try {
+      const flows = await dcFlows();
+      const flow = flows.find((f) => normName(f.name) === FLOW_PADRAO) ?? flows.find((f) => normName(f.name).includes("disparo casa conecta"));
+      if (flow) { flowId = flow.id; flowNome = flow.name; }
+    } catch { /* sem automação */ }
   }
 
   const mapeamento = { ...sugerirMapeamento(COLUNAS_PADRAO), fixos };
@@ -56,6 +63,8 @@ export async function garantirPresetPadrao(): Promise<void> {
       tagModo: "por_envio",
       tagPadrao: "{arquivo}",
       tagId, tagNome,
+      flowId, flowNome,
+      impulsoModo: "criar",
       pipelineId, pipelineNome, stageId, stageNome,
       origem: "Disparo API",
       mapeamento: mapeamento as unknown as Prisma.InputJsonValue,
@@ -97,6 +106,9 @@ export function lerPreset(body: Record<string, unknown>) {
       stageId,
       stageNome: str(body.stageNome),
       origem: str(body.origem, 120),
+      flowId: str(body.flowId, 80),
+      flowNome: str(body.flowNome),
+      impulsoModo: body.impulsoModo === "nao" || body.impulsoModo === "criar_e_iniciar" ? body.impulsoModo : "criar",
       filtroColuna: str(body.filtroColuna, 120),
       filtroValor: str(body.filtroValor, 120),
       mapeamento: mapeamento as unknown as Prisma.InputJsonValue,

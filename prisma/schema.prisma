@@ -119,6 +119,11 @@ model DisparoPreset {
   stageId     String?  @map("stage_id") @db.VarChar(80)
   stageNome   String?  @map("stage_nome") @db.VarChar(160)
   origem      String?  @db.VarChar(120)
+  /// automação (flow) do DataCrazy usada pelo Impulso
+  flowId      String?  @map("flow_id") @db.VarChar(80)
+  flowNome    String?  @map("flow_nome") @db.VarChar(160)
+  /// "nao" | "criar" | "criar_e_iniciar"
+  impulsoModo String   @default("criar") @map("impulso_modo") @db.VarChar(20)
   filtroColuna String? @map("filtro_coluna") @db.VarChar(120)
   filtroValor  String? @map("filtro_valor") @db.VarChar(120)
   /// { campos: { name: "NOME", phone: "CONTATO", ... }, observacoes: ["Cobertura", ...] }
@@ -145,6 +150,8 @@ model DisparoEnvio {
   atualizados Int      @default(0)
   falhas      Int      @default(0)
   mensagem    String?
+  impulsoId   String?  @map("impulso_id") @db.VarChar(80)
+  impulsoStatus String? @map("impulso_status") @db.VarChar(40)
   /// [{ linha, nome, telefone, erro }]
   erros       Json?
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()

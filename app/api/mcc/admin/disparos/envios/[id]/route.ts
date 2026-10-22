@@ -26,6 +26,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       atualizados: job.atualizados,
       falhas: job.falhas,
       erros: job.erros.slice(0, 200),
+      impulso: job.impulso,
       live: true,
     });
   }
@@ -45,6 +46,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     atualizados: reg.atualizados,
     falhas: reg.falhas,
     erros: erros.slice(0, 200),
+    impulso: reg.impulsoId ? { id: reg.impulsoId, status: reg.impulsoStatus ?? "" } : null,
     live: false,
     presetNome: reg.presetNome,
     arquivo: reg.arquivo,

@@ -10,9 +10,13 @@ import type { Prisma } from "@/lib/generated/prisma/client";
 import {
   dcCreateBusiness,
   dcCreateLead,
+  dcCreateBoost,
   dcCreateTag,
+  dcGetBoost,
   dcSetCampoAdicional,
+  dcStartBoost,
   dcTags,
+  type DcBoost,
   type DcCampoAdicional,
   dcFindLeadByPhone,
   dcFindLeadByTaxId,
@@ -163,6 +167,10 @@ export interface PresetEnvio {
   nome: string;
   /** tag fixa do preset (opcional), aplicada além da tag por envio */
   tagFixaId?: string | null;
+  /** automação do DataCrazy para o Impulso e o que fazer ao terminar o envio */
+  flowId?: string | null;
+  flowNome?: string | null;
+  impulsoModo?: "nao" | "criar" | "criar_e_iniciar";
   /** campos adicionais conhecidos (para converter tipos); opcional */
   camposAdicionais?: DcCampoAdicional[];
   listaId: string | null;
@@ -382,6 +390,8 @@ export interface EnvioJob {
   indices: number[];
   /** planilha original (cabeçalhos + linhas) para gerar a planilha com a coluna "Enviado DataCrazy" */
   planilha: { headers: string[]; rows: Row[] } | null;
+  /** Impulso criado no DataCrazy ao terminar (se configurado) */
+  impulso: { id: string; status: string; erro?: string } | null;
 }
 
 export const COLUNA_ENVIADO = "Enviado DataCrazy";
@@ -454,6 +464,7 @@ export async function iniciarEnvio(
     cancel: false,
     createdAt: Date.now(),
     linhaStatus: new Map(),
+    impulso: null,
     indices: origem?.indices ?? rows.map((_, i) => i),
     planilha: origem ? { headers: origem.headers, rows: origem.rows } : { headers: Object.keys(rows[0] ?? {}), rows },
   };
@@ -468,6 +479,8 @@ async function persistir(job: EnvioJob, extra: { status: string; mensagem?: stri
       where: { id: job.id },
       data: {
         status: extra.status,
+        impulsoId: job.impulso?.id || null,
+        impulsoStatus: job.impulso?.status ?? null,
         filtrados: job.filtrados,
         criados: job.criados,
         atualizados: job.atualizados,
@@ -533,8 +546,20 @@ async function executar(job: EnvioJob, rows: Row[], preset: PresetEnvio) {
     }
 
     const seg = Math.round((Date.now() - t0) / 1000);
-    job.status = "done";
     job.progressMsg = `Concluído em ${seg}s: ${job.criados} criados, ${job.atualizados} atualizados, ${job.falhas} falhas, ${job.filtrados} fora do filtro.`;
+
+    // Impulso no DataCrazy (automação + filtro pela tag da base).
+    if ((preset.impulsoModo ?? "nao") !== "nao" && preset.flowId && preset.tagId && job.criados + job.atualizados > 0) {
+      job.progressMsg += " Criando o Impulso no DataCrazy...";
+      try {
+        job.impulso = await criarImpulso(preset, job);
+      } catch (e) {
+        job.impulso = { id: "", status: "erro", erro: e instanceof Error ? e.message : String(e) };
+      }
+      job.progressMsg = job.progressMsg.replace(" Criando o Impulso no DataCrazy...", job.impulso.status === "erro" ? ` Impulso: falha (${job.impulso.erro}).` : job.impulso.status === "started" ? " Impulso criado e iniciado." : " Impulso criado (aguardando iniciar).");
+    }
+
+    job.status = "done";
     await persistir(job, { status: "done", mensagem: job.progressMsg, finished: true });
   } catch (e) {
     job.status = "error";
@@ -604,6 +629,36 @@ async function enviarLead(l: LeadMontado, preset: PresetEnvio, job: EnvioJob) {
   } catch (e) {
     console.warn(`[envio:${job.id}] não registrou lead enviado:`, e instanceof Error ? e.message : e);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Impulso
+// ---------------------------------------------------------------------------
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Cria o Impulso para a tag do envio e, se configurado, inicia. */
+export async function criarImpulso(preset: PresetEnvio, job: EnvioJob): Promise<{ id: string; status: string }> {
+  if (!preset.flowId || !preset.tagId) throw new Error("Disparo sem automação ou sem tag");
+  const titulo = preset.tagNome || `Base ${job.id}`;
+  const boost = await dcCreateBoost({
+    title: titulo,
+    description: `Portal MCC · envio #${job.id} · ${job.criados + job.atualizados} leads`,
+    flowId: preset.flowId,
+    tagId: preset.tagId,
+  });
+  // O DataCrazy conta os leads em segundo plano ("creating" → "created").
+  let atual: DcBoost = boost;
+  for (let i = 0; i < 15 && atual.status === "creating"; i++) {
+    await sleep(2000);
+    atual = await dcGetBoost(boost.id);
+  }
+  if (preset.impulsoModo === "criar_e_iniciar" && atual.status === "created") {
+    await dcStartBoost(boost.id);
+    await sleep(1500);
+    atual = await dcGetBoost(boost.id);
+  }
+  return { id: boost.id, status: atual.status };
 }
 
 // ---------------------------------------------------------------------------

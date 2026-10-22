@@ -17,7 +17,9 @@ import { cn } from "@/lib/utils";
 interface DcNamed { id: string; name: string }
 interface DcPipeline extends DcNamed { stages: DcNamed[] }
 interface DcCampoAdicional { id: string; name: string; type: string; required?: boolean; options?: { label?: string; color?: string }[] | null }
-interface DcOptions { configured: boolean; error?: string; listas?: DcNamed[]; tags?: DcNamed[]; pipelines?: DcPipeline[]; campos?: DcCampoAdicional[] }
+interface DcOptions { configured: boolean; error?: string; listas?: DcNamed[]; tags?: DcNamed[]; pipelines?: DcPipeline[]; campos?: DcCampoAdicional[]; flows?: DcNamed[] }
+interface Impulso { id: string; status: string; recordsCount?: number; erro?: string }
+const IMPULSO_LABEL: Record<string, string> = { creating: "criando", created: "criado (não iniciado)", started: "em execução", paused: "pausado", finished: "concluído", completed: "concluído", error: "com erro", erro: "falha ao criar" };
 interface Regra { coluna: string; op: "contem" | "nao_contem" | "igual" | "diferente" | "vazio" | "nao_vazio"; valor: string }
 
 type LeadFieldKey = "name" | "phone" | "taxId" | "email" | "zip" | "address" | "number" | "complement" | "block" | "city" | "state";
@@ -53,6 +55,8 @@ interface Preset {
   pipelineId: string | null; pipelineNome: string | null;
   stageId: string | null; stageNome: string | null;
   origem: string | null;
+  flowId: string | null; flowNome: string | null;
+  impulsoModo: "nao" | "criar" | "criar_e_iniciar";
   filtroColuna: string | null; filtroValor: string | null;
   mapeamento: Mapeamento;
 }
@@ -62,13 +66,13 @@ interface BaseSalva { id: number; nome: string; arquivo: string; total: number; 
 const COL_ENVIADO = "Enviado DataCrazy";
 
 interface EnvioStatus {
-  id: number; status: string; progressMsg: string; tagNome?: string | null; processed: number; total: number;
+  id: number; status: string; progressMsg: string; tagNome?: string | null; impulso?: Impulso | null; processed: number; total: number;
   filtrados: number; criados: number; atualizados: number; falhas: number;
   erros: { linha: number; nome: string; telefone: string; erro: string }[];
 }
 
 interface EnvioHist {
-  id: number; presetNome: string; arquivo: string; tagNome: string | null; status: string; total: number; filtrados: number;
+  id: number; presetNome: string; arquivo: string; tagNome: string | null; impulsoId: string | null; impulsoStatus: string | null; status: string; total: number; filtrados: number;
   criados: number; atualizados: number; falhas: number; mensagem: string | null; createdAt: string; finishedAt: string | null;
 }
 
@@ -569,7 +573,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
               <p>Os leads já estão no DataCrazy{preset?.stageNome ? ` em ${preset.pipelineNome ?? ""} › ${preset.stageNome}` : ""}{envio.tagNome ? ` com a tag ` : "."}
                 {envio.tagNome && <><code className="rounded bg-white px-1.5 py-0.5 font-semibold text-emerald-900">{envio.tagNome}</code> <button type="button" className="ml-1 underline" onClick={() => copiarTag(envio.tagNome!)}>copiar</button>.</>}
               </p>
-              <p className="mt-1 text-xs text-emerald-700">No DataCrazy: Leads › Filtros › tag {envio.tagNome ? `"${envio.tagNome}"` : "da base"} › selecionar todos › Automações › Criar impulso.</p>
+              <ImpulsoBox envioId={envio.id} impulso={envio.impulso ?? null} tagNome={envio.tagNome ?? null} onChange={(imp) => setEnvio((e) => (e ? { ...e, impulso: imp } : e))} />
             </div>
           )}
           <div className="flex flex-wrap gap-2">
@@ -661,6 +665,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
               <Linha icon={Workflow} label="Etapa" value={preset.stageNome ? `${preset.pipelineNome ?? ""} › ${preset.stageNome}` : null} />
               <Linha icon={ListChecks} label="Lista" value={preset.listaNome} />
               <Linha icon={Tag} label="Tag" value={[preset.tagNome, preset.tagModo === "por_envio" ? `+ tag da base (${preset.tagPadrao || "{arquivo}"})` : null].filter(Boolean).join(" ") || null} />
+              <Linha icon={Rocket} label="Impulso" value={preset.impulsoModo === "nao" ? "não cria" : `${preset.flowNome ?? "(sem automação)"} · ${preset.impulsoModo === "criar_e_iniciar" ? "inicia sozinho" : "criar e eu inicio"}`} />
             </div>
           )}
           {options && !options.configured && (
@@ -904,6 +909,45 @@ function Passo({ n, titulo, sub, children }: { n: number; titulo: string; sub?: 
   );
 }
 
+function ImpulsoBox({ envioId, impulso, tagNome, onChange }: { envioId: number; impulso: Impulso | null; tagNome: string | null; onChange: (i: Impulso | null) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [erro, setErro] = useState("");
+  async function acao(a: "criar" | "iniciar" | "pausar") {
+    if (a === "iniciar" && !confirm("Iniciar o Impulso agora? As mensagens começam a ser enviadas pelo DataCrazy.")) return;
+    setBusy(true); setErro("");
+    try {
+      const res = await fetch(`/api/mcc/admin/disparos/envios/${envioId}/impulso`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ acao: a }) });
+      const data = await res.json();
+      if (!res.ok) { setErro(data.error || "Falha"); return; }
+      onChange(data.impulso);
+    } finally { setBusy(false); }
+  }
+  const st = impulso?.status ?? "";
+  const link = impulso?.id ? `https://crm.datacrazy.io/boosts/${impulso.id}` : null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-emerald-200 pt-2 text-xs">
+      <Rocket className="size-3.5" />
+      {impulso && impulso.id ? (
+        <>
+          <span>Impulso <b>{IMPULSO_LABEL[st] ?? st}</b>{typeof impulso.recordsCount === "number" ? ` · ${impulso.recordsCount} leads` : ""}.</span>
+          {link && <a className="underline" href={link} target="_blank" rel="noreferrer">abrir no DataCrazy</a>}
+          {(st === "created" || st === "paused") && <Button type="button" size="sm" className="h-7 bg-emerald-700 hover:bg-emerald-800" disabled={busy} onClick={() => acao("iniciar")}>Iniciar impulso</Button>}
+          {st === "started" && <Button type="button" size="sm" variant="outline" className="h-7" disabled={busy} onClick={() => acao("pausar")}>Pausar</Button>}
+        </>
+      ) : impulso?.status === "erro" ? (
+        <><span className="text-red-700">Falha ao criar o Impulso: {impulso.erro}</span><Button type="button" size="sm" variant="outline" className="h-7" disabled={busy} onClick={() => acao("criar")}>Tentar de novo</Button></>
+      ) : (
+        <>
+          <span>Impulso ainda não criado.</span>
+          {tagNome && <Button type="button" size="sm" variant="outline" className="h-7" disabled={busy} onClick={() => acao("criar")}>Criar impulso com a tag {tagNome}</Button>}
+        </>
+      )}
+      {busy && <Loader2 className="size-3.5 animate-spin" />}
+      {erro && <span className="text-red-700">{erro}</span>}
+    </div>
+  );
+}
+
 function Stat({ label, value, cls }: { label: string; value: number; cls: string }) {
   return (
     <div className={cn("rounded-xl border px-4 py-3", cls)}>
@@ -1011,6 +1055,7 @@ function DisparosTab({ presets, loading, options, onChanged, onOptionsChanged }:
                 {p.listaNome && <Chip icon={ListChecks} text={`Lista: ${p.listaNome}`} />}
                 {p.tagNome && <Chip icon={Tag} text={`Tag fixa: ${p.tagNome}`} />}
                 {p.tagModo === "por_envio" && <Chip icon={Tag} text={`Tag por envio: ${p.tagPadrao || "{arquivo}"}`} />}
+                {p.impulsoModo !== "nao" && <Chip icon={Rocket} text={`Impulso: ${p.flowNome ?? "sem automação"} (${p.impulsoModo === "criar_e_iniciar" ? "inicia sozinho" : "eu inicio"})`} />}
                 {p.stageNome && <Chip icon={Workflow} text={`${p.pipelineNome ?? ""} › ${p.stageNome}`} />}
                 {p.filtroColuna && <Chip icon={Filter} text={`${p.filtroColuna} = ${p.filtroValor || "(preenchido)"}`} />}
               </div>
@@ -1042,7 +1087,11 @@ function PresetForm({ inicial, options, onCancel, onSaved, onOptionsChanged }: {
   const [tagPadrao, setTagPadrao] = useState(inicial?.tagPadrao ?? "{arquivo}");
   const [pipelineId, setPipelineId] = useState(inicial?.pipelineId ?? "");
   const [stageId, setStageId] = useState(inicial?.stageId ?? "");
-  const [origem, setOrigem] = useState(inicial?.origem ?? "Disparo MCC");
+  const [origem, setOrigem] = useState(inicial?.origem ?? "Disparo API");
+  const [flowId, setFlowId] = useState(inicial?.flowId ?? "");
+  const [impulsoModo, setImpulsoModo] = useState<"nao" | "criar" | "criar_e_iniciar">(inicial?.impulsoModo ?? "criar");
+  const flows = options?.flows ?? [];
+  const flowOpts = flowId && !flows.some((f) => f.id === flowId) ? [{ id: flowId, name: inicial?.flowNome ?? flowId }, ...flows] : flows;
   const [filtroColuna, setFiltroColuna] = useState(inicial?.filtroColuna ?? "");
   const [filtroValor, setFiltroValor] = useState(inicial?.filtroValor ?? "");
   const [campos, setCampos] = useState<Partial<Record<LeadFieldKey, string>>>(inicial?.mapeamento.campos ?? SUGESTAO_PADRAO.campos);
@@ -1097,6 +1146,7 @@ function PresetForm({ inicial, options, onCancel, onSaved, onOptionsChanged }: {
         pipelineId: pipelineId || null, pipelineNome: pipeline?.name ?? null,
         stageId: stageId || null, stageNome: stages.find((s) => s.id === stageId)?.name ?? null,
         origem, filtroColuna: filtroColuna || null, filtroValor: filtroValor || null,
+        flowId: flowId || null, flowNome: flowOpts.find((f) => f.id === flowId)?.name ?? null, impulsoModo,
         mapeamento: { campos, adicionais, fixos: fixosSalvos, observacoes },
       };
       const res = await fetch(inicial ? `/api/mcc/admin/disparos/presets/${inicial.id}` : "/api/mcc/admin/disparos/presets", {
@@ -1183,6 +1233,18 @@ function PresetForm({ inicial, options, onCancel, onSaved, onOptionsChanged }: {
                 {stageId && !stages.some((s) => s.id === stageId) && <option value={stageId}>{inicial?.stageNome ?? stageId}</option>}
               </select>
             </Campo>
+          </div>
+          <h3 className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Impulso (disparo das mensagens)</h3>
+          <Campo label="Automação do DataCrazy usada pelo Impulso">
+            <select className={selectCls} value={flowId} onChange={(e) => setFlowId(e.target.value)}>
+              <option value="">— nenhuma —</option>
+              {flowOpts.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </Campo>
+          <div className="flex flex-col gap-1.5 text-sm text-slate-700">
+            <label className="flex items-center gap-2"><input type="radio" checked={impulsoModo === "criar"} onChange={() => setImpulsoModo("criar")} /> Criar o Impulso ao terminar o envio e deixar <b>eu iniciar</b> (botão no portal)</label>
+            <label className="flex items-center gap-2"><input type="radio" checked={impulsoModo === "criar_e_iniciar"} onChange={() => setImpulsoModo("criar_e_iniciar")} /> Criar <b>e iniciar sozinho</b> ao terminar o envio (100% automático)</label>
+            <label className="flex items-center gap-2"><input type="radio" checked={impulsoModo === "nao"} onChange={() => setImpulsoModo("nao")} /> Não criar Impulso (eu faço no DataCrazy)</label>
           </div>
           <Campo label="Origem do lead (campo source)">
             <Input value={origem} onChange={(e) => setOrigem(e.target.value)} placeholder="Ex.: Disparo MCC" />
@@ -1360,6 +1422,7 @@ function HistoricoTab() {
                 <th className="px-4 py-2 text-left">Disparo</th>
                 <th className="px-4 py-2 text-left">Planilha</th>
                 <th className="px-4 py-2 text-left">Tag</th>
+                <th className="px-4 py-2 text-left">Impulso</th>
                 <th className="px-4 py-2 text-left">Status</th>
                 <th className="px-4 py-2 text-right">Total</th>
                 <th className="px-4 py-2 text-right">Criados</th>
@@ -1377,6 +1440,7 @@ function HistoricoTab() {
                   <td className="px-4 py-2 font-medium text-slate-800">{e.presetNome}</td>
                   <td className="max-w-[220px] truncate px-4 py-2 text-slate-600" title={e.arquivo}>{e.arquivo}</td>
                   <td className="whitespace-nowrap px-4 py-2 text-slate-700">{e.tagNome ?? "—"}</td>
+                  <td className="whitespace-nowrap px-4 py-2 text-xs">{e.impulsoId ? <a className="text-mcc-blue hover:underline" href={`https://crm.datacrazy.io/boosts/${e.impulsoId}`} target="_blank" rel="noreferrer">{IMPULSO_LABEL[e.impulsoStatus ?? ""] ?? e.impulsoStatus ?? "criado"}</a> : <span className="text-slate-400">—</span>}</td>
                   <td className="px-4 py-2"><span className={cn("rounded-full border px-2 py-0.5 text-xs font-medium", statusCls[e.status] ?? "bg-slate-50 text-slate-600 border-slate-200")} title={e.mensagem ?? ""}>{statusLabel[e.status] ?? e.status}</span></td>
                   <td className="px-4 py-2 text-right">{e.total}</td>
                   <td className="px-4 py-2 text-right text-emerald-700">{e.criados}</td>
@@ -1393,7 +1457,7 @@ function HistoricoTab() {
                   </td>
                 </tr>
                 {aberto === e.id && (
-                  <tr><td colSpan={11} className="p-0"><RetornoPanel envioId={e.id} /></td></tr>
+                  <tr><td colSpan={12} className="p-0"><RetornoPanel envioId={e.id} /></td></tr>
                 )}
                 </Fragment>
               ))}

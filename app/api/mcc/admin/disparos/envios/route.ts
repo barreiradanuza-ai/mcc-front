@@ -19,7 +19,7 @@ export async function GET(req: Request) {
     orderBy: { id: "desc" },
     take: limit,
     select: {
-      id: true, presetId: true, presetNome: true, arquivo: true, tagNome: true, status: true, total: true, filtrados: true,
+      id: true, presetId: true, presetNome: true, arquivo: true, tagNome: true, status: true, total: true, filtrados: true, impulsoId: true, impulsoStatus: true,
       criados: true, atualizados: true, falhas: true, mensagem: true, createdAt: true, finishedAt: true,
     },
   });

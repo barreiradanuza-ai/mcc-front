@@ -145,6 +145,18 @@ export interface DcOptions {
   tags: DcNamed[];
   pipelines: DcPipeline[];
   campos: DcCampoAdicional[];
+  flows: DcNamed[];
+}
+
+export interface DcBoost {
+  id: string;
+  title: string;
+  status: string;
+  recordsCount?: number;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  hasErrors?: boolean;
+  flow?: { id: string; name: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -212,8 +224,55 @@ export async function dcSetCampoAdicional(leadId: string, campoId: string, value
   await dcApi("PUT", `/api/v1/crm/additional-fields/lead/${leadId}/${campoId}`, { value });
 }
 
+/** Automações (flows) — usadas pelos Impulsos. Endpoint não documentado (/crm/flows). */
+export async function dcFlows(): Promise<DcNamed[]> {
+  const raw = await fetchAllPages<Record<string, unknown>>("/api/v1/crm/flows");
+  return raw
+    .filter((f) => f && f.id && f.active !== false)
+    .map((f) => ({ id: String(f.id), name: String(f.name ?? "").trim(), description: f.description ? String(f.description) : undefined }));
+}
+
+/** Cria um Impulso (boost) do tipo automação, filtrando leads pela tag. Não inicia. */
+export async function dcCreateBoost(opts: { title: string; description?: string; flowId: string; tagId: string; speed?: "slow" | "normal" | "fast" }): Promise<DcBoost> {
+  const r = (await dcApi("POST", "/api/v1/crm/boosts", {
+    title: opts.title.slice(0, 120),
+    description: opts.description ?? "Criado pelo portal MCC",
+    type: "automation",
+    flowId: opts.flowId,
+    speed: opts.speed ?? "normal",
+    interval: 1,
+    batchSize: 50,
+    params: { filter: { tags: [`some ${opts.tagId}`] } },
+  })) as Record<string, unknown>;
+  const d = (r.data as Record<string, unknown>) || r;
+  return { id: String(d.id), title: String(d.title ?? opts.title), status: String(d.status ?? "creating"), recordsCount: Number(d.recordsCount ?? 0) };
+}
+
+export async function dcGetBoost(id: string): Promise<DcBoost> {
+  const d = (await dcApi("GET", `/api/v1/crm/boosts/${id}`)) as Record<string, unknown>;
+  const flow = d.flow as { id?: unknown; name?: unknown } | undefined;
+  return {
+    id: String(d.id),
+    title: String(d.title ?? ""),
+    status: String(d.status ?? ""),
+    recordsCount: Number(d.recordsCount ?? 0),
+    startedAt: (d.startedAt as string | null) ?? null,
+    finishedAt: (d.finishedAt as string | null) ?? null,
+    hasErrors: Boolean(d.hasErrors),
+    flow: flow ? { id: String(flow.id ?? ""), name: String(flow.name ?? "") } : undefined,
+  };
+}
+
+export async function dcStartBoost(id: string): Promise<void> {
+  await dcApi("POST", `/api/v1/crm/boosts/${id}/start`);
+}
+
+export async function dcPauseBoost(id: string): Promise<void> {
+  await dcApi("POST", `/api/v1/crm/boosts/${id}/pause`);
+}
+
 export async function dcOptions(): Promise<DcOptions> {
-  const [listas, tags, pipelines, campos] = await Promise.all([
+  const [listas, tags, pipelines, campos, flows] = await Promise.all([
     dcListas(),
     dcTags(),
     dcPipelines(),
@@ -221,8 +280,12 @@ export async function dcOptions(): Promise<DcOptions> {
       console.warn("[datacrazy] campos adicionais indisponíveis:", e instanceof Error ? e.message : e);
       return [] as DcCampoAdicional[];
     }),
+    dcFlows().catch((e) => {
+      console.warn("[datacrazy] automações indisponíveis:", e instanceof Error ? e.message : e);
+      return [] as DcNamed[];
+    }),
   ]);
-  return { listas, tags, pipelines, campos };
+  return { listas, tags, pipelines, campos, flows };
 }
 
 export async function dcCreateTag(name: string): Promise<DcNamed> {
