@@ -36,6 +36,7 @@ interface ProcessResult {
   filename: string;
   jobId: string;
   envioAuto: { envioId: number | null; motivo: string | null; tagNome: string | null; selecionadas: number } | null;
+  baseId: number | null;
 }
 
 const POLL_INTERVAL_MS = 3000;
@@ -138,6 +139,7 @@ export default function MccDashboard() {
           filename: data.resultFilename,
           jobId,
           envioAuto: data.envioAuto ?? null,
+          baseId: data.baseId ?? null,
         });
         setLoading(false);
         setProgressMsg("");
@@ -443,7 +445,7 @@ export default function MccDashboard() {
                   <Button
                     variant="outline"
                     className="h-11 border-mcc-blue/30 bg-white text-mcc-blue hover:bg-mcc-light"
-                    onClick={() => { window.location.href = `/mcc/admin/disparos?jobId=${encodeURIComponent(result.jobId)}`; }}
+                    onClick={() => { window.location.href = result.baseId ? `/mcc/admin/disparos?baseId=${result.baseId}` : `/mcc/admin/disparos?jobId=${encodeURIComponent(result.jobId)}`; }}
                   >
                     <Rocket className="mr-2 size-4" />
                     Enviar ao DataCrazy

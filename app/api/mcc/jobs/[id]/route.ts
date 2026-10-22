@@ -31,6 +31,7 @@ export async function GET(
           resultFilename: job.resultFilename,
           resultStats: job.resultStats,
           envioAuto: job.envioAuto ?? null,
+          baseId: job.baseId ?? null,
         }
       : {}),
     ...(job.status === "error" ? { errorMessage: job.errorMessage } : {}),

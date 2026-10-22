@@ -614,27 +614,41 @@ async function enviarLead(l: LeadMontado, preset: PresetEnvio, job: EnvioJob) {
  * Para cada linha, devolve a data do último envio ao DataCrazy (ou null),
  * procurando pelo telefone e pelo CPF das colunas informadas.
  */
-export async function consultarEnviados(
+export interface EnviadoInfo {
+  enviadoEm: string;
+  tagNome: string | null;
+}
+
+/**
+ * Para cada linha, devolve o último envio ao DataCrazy (data + tag) ou null,
+ * procurando pelo telefone e pelo CPF das colunas informadas.
+ */
+export async function consultarEnviadosDetalhado(
   rows: Row[],
   colTelefone: string | undefined,
   colCpf: string | undefined,
-): Promise<(string | null)[]> {
+): Promise<(EnviadoInfo | null)[]> {
   const tels = rows.map((r) => (colTelefone ? onlyDigits(toE164BR(cell(r, colTelefone)) ?? "") : ""));
   const cpfs = rows.map((r) => (colCpf ? onlyDigits(cell(r, colCpf)).padStart(11, "0").slice(-11) : ""));
   const telSet = [...new Set(tels.filter(Boolean))];
   const cpfSet = [...new Set(cpfs.filter((c) => c.length === 11))];
-  const porTel = new Map<string, string>();
-  const porCpf = new Map<string, string>();
+  const porTel = new Map<string, EnviadoInfo>();
+  const porCpf = new Map<string, EnviadoInfo>();
   const chunk = 1000;
   for (let i = 0; i < telSet.length; i += chunk) {
-    const found = await prisma.disparoLeadEnviado.findMany({ where: { telefone: { in: telSet.slice(i, i + chunk) } }, select: { telefone: true, enviadoEm: true } });
-    for (const f of found) porTel.set(f.telefone, f.enviadoEm.toISOString());
+    const found = await prisma.disparoLeadEnviado.findMany({ where: { telefone: { in: telSet.slice(i, i + chunk) } }, select: { telefone: true, enviadoEm: true, tagNome: true } });
+    for (const f of found) porTel.set(f.telefone, { enviadoEm: f.enviadoEm.toISOString(), tagNome: f.tagNome });
   }
   for (let i = 0; i < cpfSet.length; i += chunk) {
-    const found = await prisma.disparoLeadEnviado.findMany({ where: { cpf: { in: cpfSet.slice(i, i + chunk) } }, select: { cpf: true, enviadoEm: true } });
-    for (const f of found) if (f.cpf) porCpf.set(f.cpf, f.enviadoEm.toISOString());
+    const found = await prisma.disparoLeadEnviado.findMany({ where: { cpf: { in: cpfSet.slice(i, i + chunk) } }, select: { cpf: true, enviadoEm: true, tagNome: true } });
+    for (const f of found) if (f.cpf) porCpf.set(f.cpf, { enviadoEm: f.enviadoEm.toISOString(), tagNome: f.tagNome });
   }
   return rows.map((_, i) => porTel.get(tels[i]) ?? porCpf.get(cpfs[i]) ?? null);
+}
+
+/** Versão simples: só a data do último envio (ou null). */
+export async function consultarEnviados(rows: Row[], colTelefone: string | undefined, colCpf: string | undefined): Promise<(string | null)[]> {
+  return (await consultarEnviadosDetalhado(rows, colTelefone, colCpf)).map((e) => e?.enviadoEm ?? null);
 }
 
 const fmtDataBR = (iso: string) => {

@@ -57,7 +57,8 @@ interface Preset {
   mapeamento: Mapeamento;
 }
 
-interface PlanilhaInfo { arquivo: string; headers: string[]; total: number; truncado: boolean; rows: Record<string, unknown>[]; enviadoEm: (string | null)[]; sugestao: Mapeamento }
+interface PlanilhaInfo { baseId: number | null; arquivo: string; headers: string[]; total: number; truncado: boolean; rows: Record<string, unknown>[]; enviadoEm: (string | null)[]; enviadoTag: (string | null)[]; sugestao: Mapeamento }
+interface BaseSalva { id: number; nome: string; arquivo: string; total: number; origem: string | null; createdAt: string }
 const COL_ENVIADO = "Enviado DataCrazy";
 
 interface EnvioStatus {
@@ -119,6 +120,7 @@ function DisparosInner() {
   const searchParams = useSearchParams();
   const jobIdParam = searchParams.get("jobId");
   const envioIdParam = searchParams.get("envioId");
+  const baseIdParam = searchParams.get("baseId");
 
   const [tab, setTab] = useState<"enviar" | "disparos" | "historico">("enviar");
   const [options, setOptions] = useState<DcOptions | null>(null);
@@ -195,7 +197,7 @@ function DisparosInner() {
       </div>
 
       {tab === "enviar" && (
-        <EnviarTab presets={presets} presetsLoading={presetsLoading} options={options} jobIdParam={jobIdParam} envioIdParam={envioIdParam} onIrParaDisparos={() => setTab("disparos")} />
+        <EnviarTab presets={presets} presetsLoading={presetsLoading} options={options} jobIdParam={jobIdParam} envioIdParam={envioIdParam} baseIdParam={baseIdParam} onIrParaDisparos={() => setTab("disparos")} />
       )}
       {tab === "disparos" && (
         <DisparosTab presets={presets} loading={presetsLoading} options={options} onChanged={loadPresets} onOptionsChanged={() => loadOptions(true)} />
@@ -232,9 +234,16 @@ function ConexaoBadge({ options, loading, onRefresh }: { options: DcOptions | nu
 // Aba: Enviar
 // ---------------------------------------------------------------------------
 
-function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam, onIrParaDisparos }: {
-  presets: Preset[]; presetsLoading: boolean; options: DcOptions | null; jobIdParam: string | null; envioIdParam: string | null; onIrParaDisparos: () => void;
+function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam, baseIdParam, onIrParaDisparos }: {
+  presets: Preset[]; presetsLoading: boolean; options: DcOptions | null; jobIdParam: string | null; envioIdParam: string | null; baseIdParam: string | null; onIrParaDisparos: () => void;
 }) {
+  const [bases, setBases] = useState<BaseSalva[]>([]);
+  const [baseId, setBaseId] = useState<number | null>(baseIdParam ? Number(baseIdParam) : null);
+  const [colFiltros, setColFiltros] = useState<Record<string, string>>({});
+  const loadBases = useCallback(async () => {
+    try { const r = await fetch("/api/mcc/admin/disparos/bases"); const d = await r.json(); setBases(d.bases ?? []); } catch { /* ignora */ }
+  }, []);
+  useEffect(() => { void loadBases(); }, [loadBases]);
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -264,21 +273,24 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
   useEffect(() => { if (!presetId && presets.length === 1) setPresetId(String(presets[0].id)); }, [presets, presetId]);
 
   // ---- Planilha -----------------------------------------------------------
-  const lerPlanilha = useCallback(async (f: File | null, jid: string | null) => {
+  const lerPlanilha = useCallback(async (f: File | null, jid: string | null, bid?: number | null) => {
     setErro(""); setInfo(null); setLendo(true);
     try {
       const fd = new FormData();
       if (f) fd.append("file", f);
       else if (jid) fd.append("jobId", jid);
+      else if (bid) fd.append("baseId", String(bid));
       else return;
       const res = await fetch("/api/mcc/admin/disparos/planilha", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) { setErro(data.error || "Não foi possível ler a planilha"); if (jid) setJobId(null); return; }
       const enviadoEm: (string | null)[] = data.enviadoEm ?? [];
-      const rows = (data.rows as Record<string, unknown>[]).map((r, i) => ({ ...r, [COL_ENVIADO]: enviadoEm[i] ? `Sim (${new Date(enviadoEm[i]!).toLocaleDateString("pt-BR")})` : "Não" }));
+      const enviadoTag: (string | null)[] = data.enviadoTag ?? [];
+      const rows = (data.rows as Record<string, unknown>[]).map((r, i) => ({ ...r, [COL_ENVIADO]: enviadoEm[i] ? `Sim${enviadoTag[i] ? ` · ${enviadoTag[i]}` : ""} · ${new Date(enviadoEm[i]!).toLocaleDateString("pt-BR")}` : "Não" }));
       const headers = [...(data.headers as string[]).filter((h) => h !== COL_ENVIADO), COL_ENVIADO];
-      setInfo({ ...data, rows, headers, enviadoEm });
-      setFacetas({}); setRegras([]); setBusca(""); setPagina(0);
+      setInfo({ ...data, rows, headers, enviadoEm, enviadoTag });
+      if (data.baseId) { setBaseId(data.baseId); void loadBases(); }
+      setFacetas({}); setRegras([]); setBusca(""); setColFiltros({}); setPagina(0);
       // Quem já foi enviado começa desmarcado, para não duplicar no DataCrazy.
       setExcluidos(new Set(enviadoEm.map((v, i) => (v ? i : -1)).filter((i) => i >= 0)));
     } catch {
@@ -286,9 +298,10 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
     } finally {
       setLendo(false);
     }
-  }, []);
+  }, [loadBases]);
 
   useEffect(() => { if (jobIdParam) void lerPlanilha(null, jobIdParam); }, [jobIdParam, lerPlanilha]);
+  useEffect(() => { const id = Number(baseIdParam); if (id > 0) void lerPlanilha(null, null, id); }, [baseIdParam, lerPlanilha]);
   // Abre direto o acompanhamento de um envio (ex.: envio automático iniciado após o processamento).
   useEffect(() => {
     const id = Number(envioIdParam);
@@ -303,7 +316,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
     if (!f) return;
     const ext = f.name.split(".").pop()?.toLowerCase();
     if (ext !== "xlsx" && ext !== "xls") { setErro("Envie um arquivo .xlsx ou .xls"); return; }
-    setFile(f); setJobId(null); setEnvio(null); setTagEditada(false);
+    setFile(f); setJobId(null); setBaseId(null); setEnvio(null); setTagEditada(false);
     void lerPlanilha(f, null);
   }
 
@@ -405,13 +418,17 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
         if (rg.op === "nao_vazio" && v === "") return;
       }
       if (b && !info.headers.some((h) => nrm(String(r[h] ?? "")).includes(b))) return;
+      for (const [col, txt] of Object.entries(colFiltros)) {
+        const t = nrm(txt);
+        if (t && !nrm(String(r[col] ?? "")).includes(t)) return;
+      }
       out.push(i);
     });
     return out;
-  }, [info, facetas, regras, busca]);
+  }, [info, facetas, regras, busca, colFiltros]);
 
   const selecionados = useMemo(() => filtrados.filter((i) => !excluidos.has(i)), [filtrados, excluidos]);
-  useEffect(() => { setPagina(0); }, [facetas, regras, busca]);
+  useEffect(() => { setPagina(0); }, [facetas, regras, busca, colFiltros]);
 
   function toggleFaceta(col: string, valor: string) {
     setFacetas((f) => {
@@ -427,7 +444,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
     if (!info) return [] as string[];
     const prior = [mapeamento.campos.name, mapeamento.campos.phone].filter((c): c is string => !!c);
     const resto = info.headers.filter((h) => !prior.includes(h) && h !== COL_ENVIADO);
-    return [COL_ENVIADO, ...prior, ...resto].slice(0, 9);
+    return [COL_ENVIADO, ...prior, ...resto].slice(0, 14);
   }, [info, mapeamento]);
 
   const POR_PAGINA = 50;
@@ -462,7 +479,7 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
     setIniciando(true); setErro("");
     try {
       const fd = new FormData();
-      if (file) fd.append("file", file); else if (jobId) fd.append("jobId", jobId);
+      if (baseId) fd.append("baseId", String(baseId)); else if (file) fd.append("file", file); else if (jobId) fd.append("jobId", jobId);
       fd.append("presetId", String(preset.id));
       fd.append("mapeamento", JSON.stringify(mapeamento));
       fd.append("salvarMapeamento", salvarMapeamento ? "1" : "0");
@@ -488,10 +505,16 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
   }
   function reset() {
     if (pollRef.current) clearTimeout(pollRef.current);
-    setFile(null); setJobId(null); setInfo(null); setEnvio(null); setErro(""); setTagEditada(false); setTagNome("");
-    setFacetas({}); setRegras([]); setBusca(""); setExcluidos(new Set());
+    setFile(null); setJobId(null); setBaseId(null); setInfo(null); setEnvio(null); setErro(""); setTagEditada(false); setTagNome("");
+    setFacetas({}); setRegras([]); setBusca(""); setColFiltros({}); setExcluidos(new Set());
     if (inputRef.current) inputRef.current.value = "";
   }
+  function outroSegmento() {
+    if (pollRef.current) clearTimeout(pollRef.current);
+    setEnvio(null); setErro(""); setTagEditada(false); setTagNome("");
+    if (baseId) void lerPlanilha(null, null, baseId); else if (file) void lerPlanilha(file, null); else if (jobId) void lerPlanilha(null, jobId);
+  }
+  async function copiarTag(t: string) { try { await navigator.clipboard.writeText(t); } catch { /* sem clipboard */ } }
 
   const emAndamento = envio && (envio.status === "processing" || envio.status === "pending");
   const pct = envio && envio.total > 0 ? Math.round((envio.processed / envio.total) * 100) : 0;
@@ -542,19 +565,23 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
             </div>
           )}
           {envio.status === "done" && (
-            <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-              Os leads já estão no DataCrazy{preset?.listaNome ? ` na lista "${preset.listaNome}"` : ""}{envio.tagNome ? ` com a tag "${envio.tagNome}"` : ""}{preset?.stageNome ? ` na etapa "${preset.stageNome}"` : ""}. Agora é só iniciar o Impulso lá.
-            </p>
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              <p>Os leads já estão no DataCrazy{preset?.stageNome ? ` em ${preset.pipelineNome ?? ""} › ${preset.stageNome}` : ""}{envio.tagNome ? ` com a tag ` : "."}
+                {envio.tagNome && <><code className="rounded bg-white px-1.5 py-0.5 font-semibold text-emerald-900">{envio.tagNome}</code> <button type="button" className="ml-1 underline" onClick={() => copiarTag(envio.tagNome!)}>copiar</button>.</>}
+              </p>
+              <p className="mt-1 text-xs text-emerald-700">No DataCrazy: Leads › Filtros › tag {envio.tagNome ? `"${envio.tagNome}"` : "da base"} › selecionar todos › Automações › Criar impulso.</p>
+            </div>
           )}
           <div className="flex flex-wrap gap-2">
             {emAndamento ? (
               <Button variant="outline" onClick={cancelar}><XCircle className="size-4" /> Cancelar envio</Button>
             ) : (
               <>
-                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={async () => { const r = await fetch(`/api/mcc/admin/disparos/envios/${envio.id}/planilha`); if (r.ok) downloadBlob(await r.blob(), `envio_${envio.id}_enviado_datacrazy.xlsx`); else setErro("Planilha do envio não está mais disponível"); }}>
-                  <Download className="size-4" /> Baixar planilha com coluna &quot;Enviado DataCrazy&quot;
+                {(baseId || file || jobId) && <Button className="bg-mcc-blue hover:bg-mcc-blue/90" onClick={outroSegmento}><Filter className="size-4" /> Enviar outro segmento desta base</Button>}
+                <Button variant="outline" onClick={async () => { const r = await fetch(`/api/mcc/admin/disparos/envios/${envio.id}/planilha`); if (r.ok) downloadBlob(await r.blob(), `envio_${envio.id}_enviado_datacrazy.xlsx`); else setErro("Planilha do envio não está mais disponível"); }}>
+                  <Download className="size-4" /> Planilha com coluna &quot;Enviado DataCrazy&quot;
                 </Button>
-                <Button variant="outline" onClick={reset}><Upload className="size-4" /> Enviar outra planilha</Button>
+                <Button variant="outline" onClick={reset}><Upload className="size-4" /> Outra planilha</Button>
               </>
             )}
           </div>
@@ -600,6 +627,21 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
               </>
             )}
           </div>
+          {bases.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-slate-600">ou abrir uma base salva:</span>
+              <select className={cn(selectCls, "max-w-md")} value={baseId ?? ""} onChange={(e) => { const id = Number(e.target.value); if (id) { setFile(null); setJobId(null); setEnvio(null); setTagEditada(false); setBaseId(id); void lerPlanilha(null, null, id); } }}>
+                <option value="">— escolher —</option>
+                {bases.map((b) => <option key={b.id} value={b.id}>{b.nome} · {b.total} linhas · {new Date(b.createdAt).toLocaleDateString("pt-BR")}{b.origem === "processamento" ? " · processada" : ""}</option>)}
+              </select>
+              {baseId && (
+                <Button type="button" variant="ghost" size="sm" className="text-red-600" onClick={async () => { if (!confirm("Excluir esta base salva do portal? (não afeta o DataCrazy)")) return; await fetch(`/api/mcc/admin/disparos/bases/${baseId}`, { method: "DELETE" }); setBaseId(null); setInfo(null); void loadBases(); }}><Trash2 className="size-4" /></Button>
+              )}
+            </div>
+          )}
+          {info && info.enviadoEm.some(Boolean) && (
+            <p className="mt-2 text-xs text-slate-500">{info.enviadoEm.filter(Boolean).length.toLocaleString("pt-BR")} de {info.total.toLocaleString("pt-BR")} linhas já foram enviadas em bases anteriores (ver coluna &quot;{COL_ENVIADO}&quot;); {(info.total - info.enviadoEm.filter(Boolean).length).toLocaleString("pt-BR")} ainda não.</p>
+          )}
           {erro && !info && <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><XCircle className="mt-0.5 size-4 shrink-0" /> {erro}</div>}
         </Passo>
 
@@ -747,8 +789,8 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="button" variant="outline" size="sm" onClick={() => setRegras((rs) => [...rs, { coluna: info.headers[0], op: "contem", valor: "" }])}><Plus className="size-4" /> Regra</Button>
                 <Input className="h-9 w-64" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar em qualquer coluna..." />
-                {(Object.keys(facetas).length > 0 || regras.length > 0 || busca || excluidos.size > 0) && (
-                  <Button type="button" variant="ghost" size="sm" onClick={() => { setFacetas({}); setRegras([]); setBusca(""); setExcluidos(new Set()); }}>Limpar filtros</Button>
+                {(Object.keys(facetas).length > 0 || regras.length > 0 || busca || Object.keys(colFiltros).length > 0 || excluidos.size > 0) && (
+                  <Button type="button" variant="ghost" size="sm" onClick={() => { setFacetas({}); setRegras([]); setBusca(""); setColFiltros({}); setExcluidos(new Set((info.enviadoEm ?? []).map((v, i) => (v ? i : -1)).filter((i) => i >= 0))); }}>Limpar filtros</Button>
                 )}
               </div>
             </div>
@@ -773,6 +815,20 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam,
                       <th className="w-8 px-2 py-1.5"></th>
                       <th className="w-10 px-2 py-1.5 text-left">#</th>
                       {colunasGrade.map((h) => <th key={h} className="whitespace-nowrap px-2 py-1.5 text-left">{h}</th>)}
+                    </tr>
+                    <tr className="bg-slate-50/70">
+                      <th className="px-2 py-1"></th>
+                      <th className="px-2 py-1 text-left"><Filter className="size-3 text-slate-400" /></th>
+                      {colunasGrade.map((h) => (
+                        <th key={h} className="px-1 py-1">
+                          <input
+                            className="h-6 w-full min-w-[90px] rounded border border-slate-200 bg-white px-1.5 text-[11px] font-normal text-slate-700 outline-none focus:border-mcc-blue"
+                            placeholder="filtrar..."
+                            value={colFiltros[h] ?? ""}
+                            onChange={(e) => setColFiltros((f) => { const n = { ...f }; if (e.target.value) n[h] = e.target.value; else delete n[h]; return n; })}
+                          />
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">

@@ -168,3 +168,17 @@ model DisparoLeadEnviado {
   @@index([cpf])
   @@map("disparo_leads_enviados")
 }
+
+/// Planilhas guardadas no portal para segmentar em várias bases/tags.
+model DisparoBase {
+  id        Int      @id @default(autoincrement())
+  nome      String   @db.VarChar(200)
+  arquivo   String   @db.VarChar(255)
+  headers   Json
+  rows      Json
+  total     Int      @default(0)
+  origem    String?  @db.VarChar(40)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@map("disparo_bases")
+}

@@ -8,6 +8,7 @@ import { normalizePhone, checkWhatsAppBulk } from "@/lib/mcc/validators/whatsapp
 import { createJob, updateJob } from "@/lib/mcc/jobStore";
 import { COLUNA_ENVIADO, consultarEnviados, fmtDataBR } from "@/lib/mcc/disparos";
 import { envioAutomatico } from "@/lib/mcc/disparosAuto";
+import { salvarBase } from "@/lib/mcc/disparosPlanilha";
 import { ensureMccSession } from "@/lib/mcc/authz";
 import { randomUUID } from "crypto";
 
@@ -245,6 +246,14 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
     const elapsedMs = Math.round(performance.now() - t0);
 
 
+    // Guarda a planilha processada como base em Disparos (para segmentar em várias tags).
+    let baseId: number | null = null;
+    try {
+      if (outputRows.length > 0) baseId = await salvarBase({ arquivo: resultFilename, headers: Object.keys(outputRows[0]), rows: outputRows }, "processamento");
+    } catch (e) {
+      console.warn(`[job:${jobId}] não guardou a base em Disparos:`, e instanceof Error ? e.message : e);
+    }
+
     // Envio automático ao DataCrazy (se configurado em Disparos).
     let envioAuto: { envioId: number | null; motivo: string | null; tagNome: string | null; selecionadas: number } | undefined;
     try {
@@ -260,6 +269,7 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
       status: "done",
       progressMsg: "Processamento concluído!",
       envioAuto,
+      baseId,
       resultBase64: outBuffer.toString("base64"),
       resultFilename,
       resultStats: {

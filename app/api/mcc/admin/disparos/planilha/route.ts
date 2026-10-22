@@ -3,8 +3,8 @@ import { prisma } from "@/lib/db";
 import { ensureMccSession } from "@/lib/mcc/authz";
 import { datacrazyConfigured, type DcCampoAdicional } from "@/lib/mcc/datacrazy";
 import { getDcOptionsCached } from "@/lib/mcc/dcCache";
-import { consultarEnviados, parseMapeamento, sugerirMapeamento } from "@/lib/mcc/disparos";
-import { lerPlanilhaDaRequisicao } from "@/lib/mcc/disparosPlanilha";
+import { consultarEnviadosDetalhado, parseMapeamento, sugerirMapeamento, type EnviadoInfo } from "@/lib/mcc/disparos";
+import { lerPlanilhaDaRequisicao, salvarBase } from "@/lib/mcc/disparosPlanilha";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -42,19 +42,32 @@ export async function POST(req: Request) {
   const rows = lida.rows.slice(0, MAX_LINHAS);
   const sugestao = sugerirMapeamento(lida.headers, campos, base);
   // Quais linhas já foram enviadas ao DataCrazy (pelo telefone/CPF das colunas sugeridas).
-  let enviadoEm: (string | null)[] = rows.map(() => null);
+  let enviados: (EnviadoInfo | null)[] = rows.map(() => null);
   try {
-    enviadoEm = await consultarEnviados(rows, sugestao.campos.phone, sugestao.campos.taxId);
+    enviados = await consultarEnviadosDetalhado(rows, sugestao.campos.phone, sugestao.campos.taxId);
   } catch (e) {
     console.warn("[disparos] consulta de enviados falhou:", e instanceof Error ? e.message : e);
   }
+
+  // Planilha nova (arquivo ou job) vira uma base salva, para segmentar depois sem subir de novo.
+  let baseId = Number(lida.extra.baseId) || null;
+  if (!baseId && lida.extra.salvarBase !== "0") {
+    try {
+      baseId = await salvarBase(lida, lida.extra.jobId ? "processamento" : "upload");
+    } catch (e) {
+      console.warn("[disparos] não foi possível guardar a base:", e instanceof Error ? e.message : e);
+    }
+  }
+
   return NextResponse.json({
+    baseId,
     arquivo: lida.arquivo,
     headers: lida.headers,
     total: lida.rows.length,
     truncado: lida.rows.length > MAX_LINHAS,
     rows,
-    enviadoEm,
+    enviadoEm: enviados.map((e) => e?.enviadoEm ?? null),
+    enviadoTag: enviados.map((e) => e?.tagNome ?? null),
     sugestao,
   });
 }
