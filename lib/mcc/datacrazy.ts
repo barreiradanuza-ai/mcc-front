@@ -132,10 +132,19 @@ export interface DcLead {
   [k: string]: unknown;
 }
 
+export interface DcCampoAdicional {
+  id: string;
+  name: string;
+  type: string;
+  required?: boolean;
+  options?: unknown;
+}
+
 export interface DcOptions {
   listas: DcNamed[];
   tags: DcNamed[];
   pipelines: DcPipeline[];
+  campos: DcCampoAdicional[];
 }
 
 // ---------------------------------------------------------------------------
@@ -182,9 +191,38 @@ export async function dcPipelines(): Promise<DcPipeline[]> {
   return out;
 }
 
+/** Campos adicionais (personalizados) de lead. Endpoint usado pelo conector oficial do n8n. */
+export async function dcCamposAdicionais(): Promise<DcCampoAdicional[]> {
+  const raw = dcList<Record<string, unknown>>(
+    await dcApi("GET", "/api/v1/crm/additionalFields?skip=0&take=500&filter%5Bentity%5D=lead"),
+  );
+  return raw
+    .filter((f) => f && f.id)
+    .map((f) => ({
+      id: String(f.id),
+      name: String(f.name ?? ""),
+      type: String(f.type ?? "text"),
+      required: Boolean(f.required),
+      options: f.options,
+    }));
+}
+
+/** Grava o valor de um campo adicional em um lead. */
+export async function dcSetCampoAdicional(leadId: string, campoId: string, value: string | number | boolean): Promise<void> {
+  await dcApi("PUT", `/api/v1/crm/additional-fields/lead/${leadId}/${campoId}`, { value });
+}
+
 export async function dcOptions(): Promise<DcOptions> {
-  const [listas, tags, pipelines] = await Promise.all([dcListas(), dcTags(), dcPipelines()]);
-  return { listas, tags, pipelines };
+  const [listas, tags, pipelines, campos] = await Promise.all([
+    dcListas(),
+    dcTags(),
+    dcPipelines(),
+    dcCamposAdicionais().catch((e) => {
+      console.warn("[datacrazy] campos adicionais indisponíveis:", e instanceof Error ? e.message : e);
+      return [] as DcCampoAdicional[];
+    }),
+  ]);
+  return { listas, tags, pipelines, campos };
 }
 
 export async function dcCreateTag(name: string): Promise<DcNamed> {

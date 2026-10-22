@@ -11,7 +11,9 @@ import {
   dcCreateBusiness,
   dcCreateLead,
   dcCreateTag,
+  dcSetCampoAdicional,
   dcTags,
+  type DcCampoAdicional,
   dcFindLeadByPhone,
   dcFindLeadByTaxId,
   dcLeadHasBusinessInStage,
@@ -46,6 +48,8 @@ export type LeadFieldKey = (typeof LEAD_FIELDS)[number]["key"];
 export interface Mapeamento {
   /** campo do lead -> nome da coluna na planilha */
   campos: Partial<Record<LeadFieldKey, string>>;
+  /** id do campo adicional (DataCrazy) -> nome da coluna na planilha */
+  adicionais: Record<string, string>;
   /** colunas copiadas para as observações do lead, no formato "Coluna: valor" */
   observacoes: string[];
 }
@@ -64,8 +68,12 @@ const norm = (s: unknown) =>
     .trim()
     .toLowerCase();
 
-/** Sugere um mapeamento a partir dos cabeçalhos de uma planilha. */
-export function sugerirMapeamento(headers: string[]): Mapeamento {
+/**
+ * Sugere um mapeamento a partir dos cabeçalhos de uma planilha. Se os campos
+ * adicionais do DataCrazy forem informados, colunas com o mesmo nome de um
+ * campo adicional vão para ele; o resto vai para as observações.
+ */
+export function sugerirMapeamento(headers: string[], camposAdicionais: DcCampoAdicional[] = [], base?: Mapeamento): Mapeamento {
   const find = (...cands: string[]) => {
     for (const c of cands) {
       const h = headers.find((x) => norm(x) === norm(c));
@@ -73,24 +81,44 @@ export function sugerirMapeamento(headers: string[]): Mapeamento {
     }
     return undefined;
   };
+  const has = (c?: string) => !!c && headers.some((h) => norm(h) === norm(c));
+  const baseCampos = base?.campos ?? {};
   const campos: Mapeamento["campos"] = {
-    name: find("NOME", "Nome", "Cliente"),
-    phone: find("CONTATO", "Telefone", "Celular", "WhatsApp", "Fone"),
-    taxId: find("CPF", "CPF Criado", "Documento"),
-    email: find("EMAIL", "E-mail"),
-    zip: find("CEP"),
-    address: find("Logradouro", "Endereço", "Rua"),
-    number: find("Número", "Numero", "Nº"),
-    complement: find("Abrev. Tipo Comp.", "Complemento"),
-    block: find("Bairro"),
-    city: find("Cidade", "Município", "Municipio"),
-    state: find("UF", "Estado"),
+    name: (has(baseCampos.name) && baseCampos.name) || find("NOME", "Nome", "Cliente", "Nome do cliente", "Lead"),
+    phone: (has(baseCampos.phone) && baseCampos.phone) || find("CONTATO", "Telefone", "Celular", "WhatsApp", "Fone", "Numero", "Número de telefone"),
+    taxId: (has(baseCampos.taxId) && baseCampos.taxId) || find("CPF", "CPF Criado", "Documento", "CPF/CNPJ"),
+    email: (has(baseCampos.email) && baseCampos.email) || find("EMAIL", "E-mail"),
+    zip: (has(baseCampos.zip) && baseCampos.zip) || find("CEP"),
+    address: (has(baseCampos.address) && baseCampos.address) || find("Logradouro", "Endereço", "Rua"),
+    number: (has(baseCampos.number) && baseCampos.number) || find("Número", "Numero", "Nº", "Num"),
+    complement: (has(baseCampos.complement) && baseCampos.complement) || find("Abrev. Tipo Comp.", "Complemento"),
+    block: (has(baseCampos.block) && baseCampos.block) || find("Bairro"),
+    city: (has(baseCampos.city) && baseCampos.city) || find("Cidade", "Município", "Municipio"),
+    state: (has(baseCampos.state) && baseCampos.state) || find("UF", "Estado"),
   };
   for (const k of Object.keys(campos) as LeadFieldKey[]) if (!campos[k]) delete campos[k];
-  // Todas as demais colunas vão para as observações do lead (nada se perde).
   const usadas = new Set(Object.values(campos).map((c) => norm(c)));
+
+  // Campos adicionais: mantém os do preset que existem na planilha; sugere por nome para os demais.
+  const adicionais: Record<string, string> = {};
+  for (const [fieldId, col] of Object.entries(base?.adicionais ?? {})) {
+    if (has(col) && !usadas.has(norm(col)) && camposAdicionais.some((f) => f.id === fieldId)) {
+      adicionais[fieldId] = col;
+      usadas.add(norm(col));
+    }
+  }
+  for (const f of camposAdicionais) {
+    if (adicionais[f.id]) continue;
+    const col = headers.find((h) => norm(h) === norm(f.name) && !usadas.has(norm(h)));
+    if (col) {
+      adicionais[f.id] = col;
+      usadas.add(norm(col));
+    }
+  }
+
+  // Todas as demais colunas vão para as observações do lead (nada se perde).
   const observacoes = headers.filter((h) => h.trim() !== "" && !usadas.has(norm(h)));
-  return { campos, observacoes };
+  return { campos, adicionais, observacoes };
 }
 
 export function parseMapeamento(v: unknown): Mapeamento {
@@ -101,8 +129,11 @@ export function parseMapeamento(v: unknown): Mapeamento {
     const col = src[f.key];
     if (typeof col === "string" && col.trim()) campos[f.key] = col.trim();
   }
+  const adicionais: Record<string, string> = {};
+  const srcAd = (o.adicionais && typeof o.adicionais === "object" ? o.adicionais : {}) as Record<string, unknown>;
+  for (const [id, col] of Object.entries(srcAd)) if (id && typeof col === "string" && col.trim()) adicionais[id] = col.trim();
   const observacoes = Array.isArray(o.observacoes) ? o.observacoes.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
-  return { campos, observacoes };
+  return { campos, adicionais, observacoes };
 }
 
 export function validarMapeamento(m: Mapeamento): string | null {
@@ -118,6 +149,8 @@ export function validarMapeamento(m: Mapeamento): string | null {
 export interface PresetEnvio {
   id: number | null;
   nome: string;
+  /** campos adicionais conhecidos (para converter tipos); opcional */
+  camposAdicionais?: DcCampoAdicional[];
   listaId: string | null;
   /** tag já resolvida (id) — no modo "por_envio" é preenchida ao iniciar o envio */
   tagId: string | null;
@@ -159,6 +192,29 @@ export interface LeadMontado {
   cpfDigits: string | null;
   payload: Record<string, unknown>;
   notas: string;
+  /** id do campo adicional -> valor já convertido */
+  adicionais: Record<string, string | number>;
+}
+
+/** Converte o texto da planilha para o tipo do campo adicional do DataCrazy. */
+export function converterValorAdicional(raw: string, tipo: string | undefined): string | number | null {
+  const v = raw.trim();
+  if (!v) return null;
+  const t = (tipo || "").toLowerCase();
+  if (t.includes("number") || t.includes("numer") || t.includes("money") || t.includes("monet") || t.includes("currency")) {
+    const n = Number(v.replace(/[^\d,.-]/g, "").replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", "."));
+    return Number.isFinite(n) ? n : v;
+  }
+  if (t.includes("date") || t.includes("data")) {
+    const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+    if (m) {
+      const y = m[3].length === 2 ? `20${m[3]}` : m[3];
+      return `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    }
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? v : d.toISOString().slice(0, 10);
+  }
+  return v;
 }
 
 export function montarLead(row: Row, preset: PresetEnvio): LeadMontado | { erro: string } {
@@ -195,6 +251,13 @@ export function montarLead(row: Row, preset: PresetEnvio): LeadMontado | { erro:
     .filter(Boolean)
     .join("\n");
 
+  const adicionais: Record<string, string | number> = {};
+  const tipos = new Map<string, string>((preset.camposAdicionais ?? []).map((f) => [f.id, f.type] as [string, string]));
+  for (const [fieldId, col] of Object.entries(m.adicionais ?? {})) {
+    const conv = converterValorAdicional(cell(row, col), tipos.get(fieldId));
+    if (conv !== null) adicionais[fieldId] = conv;
+  }
+
   const payload: Record<string, unknown> = { name: nome, phone: telefone, type: "PERSON" };
   if (cpfDigits && cpfDigits.length === 11) payload.taxId = formatCpf(cpfDigits);
   const email = cell(row, m.campos.email);
@@ -203,7 +266,7 @@ export function montarLead(row: Row, preset: PresetEnvio): LeadMontado | { erro:
   if (preset.origem) payload.source = preset.origem;
   if (notas) payload.notes = notas;
 
-  return { nome, telefone, cpfDigits, payload, notas };
+  return { nome, telefone, cpfDigits, payload, notas, adicionais };
 }
 
 export function passaFiltro(row: Row, preset: PresetEnvio): boolean {
@@ -438,7 +501,7 @@ async function enviarLead(l: LeadMontado, preset: PresetEnvio, job: EnvioJob) {
   if (!lead) {
     const payload: Record<string, unknown> = { ...l.payload };
     if (tagIds.length) payload.tags = tagIds.map((id) => ({ id }));
-    if (listIds.length) payload.lists = listIds.map((id) => ({ id }));
+    if (listIds.length) payload.lists = [{ id: listIds }];
     lead = await dcCreateLead(payload);
     job.criados++;
   } else {
@@ -456,12 +519,22 @@ async function enviarLead(l: LeadMontado, preset: PresetEnvio, job: EnvioJob) {
     const novasTags = tagIds.filter((id) => !tagsAtuais.includes(id));
     const novasListas = listIds.filter((id) => !listasAtuais.includes(id));
     if (novasTags.length) patch.tags = [...tagsAtuais, ...novasTags].map((id) => ({ id }));
-    if (novasListas.length) patch.lists = [...listasAtuais, ...novasListas].map((id) => ({ id }));
+    if (novasListas.length) patch.lists = [{ id: [...listasAtuais, ...novasListas] }];
     if (Object.keys(patch).length) await dcUpdateLead(lead.id, patch);
     job.atualizados++;
   }
 
-  // 2) Negócio na etapa do funil escolhida (se o preset tiver etapa).
+  // 2) Campos adicionais (um PUT por campo com valor).
+  for (const [fieldId, value] of Object.entries(l.adicionais)) {
+    try {
+      await dcSetCampoAdicional(lead.id, fieldId, value);
+    } catch (e) {
+      // não derruba o lead por causa de um campo; registra no log do servidor
+      console.warn(`[envio:${job.id}] campo adicional ${fieldId} do lead ${lead.id}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  // 3) Negócio na etapa do funil escolhida (se o preset tiver etapa).
   if (preset.stageId) {
     const ja = await dcLeadHasBusinessInStage(lead.id, preset.stageId);
     if (!ja) await dcCreateBusiness(lead.id, preset.stageId, l.cpfDigits ? `mcc-${l.cpfDigits}-${preset.id ?? 0}` : undefined);

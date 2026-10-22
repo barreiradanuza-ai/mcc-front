@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { ensureMccSession } from "@/lib/mcc/authz";
-import { datacrazyConfigured } from "@/lib/mcc/datacrazy";
-import { garantirTag, hasRunningEnvio, iniciarEnvio, parseMapeamento, resolverNomeTag, type PresetEnvio } from "@/lib/mcc/disparos";
+import { datacrazyConfigured, type DcCampoAdicional } from "@/lib/mcc/datacrazy";
+import { getDcOptionsCached } from "@/lib/mcc/dcCache";
+import { garantirTag, hasRunningEnvio, iniciarEnvio, parseMapeamento, resolverNomeTag, validarMapeamento, type PresetEnvio } from "@/lib/mcc/disparos";
+import type { Prisma } from "@/lib/generated/prisma/client";
 import { lerPlanilhaDaRequisicao } from "@/lib/mcc/disparosPlanilha";
 
 export const runtime = "nodejs";
@@ -26,7 +28,9 @@ export async function GET(req: Request) {
 
 /**
  * POST: inicia um envio. multipart com "file" + "presetId" (ou "jobId" + "presetId").
- * Responde logo com o id do envio; o progresso é consultado em /envios/[id].
+ * Opcionais: "mapeamento" (JSON, substitui o do preset), "salvarMapeamento" ("1" grava
+ * no preset), "linhas" (JSON com os índices das linhas selecionadas; sem ele vão todas),
+ * "tagNome" (tag deste envio). Responde logo com o id; progresso em /envios/[id].
  */
 export async function POST(req: Request) {
   const { error } = await ensureMccSession();
@@ -57,17 +61,55 @@ export async function POST(req: Request) {
     }
   }
 
+  // Mapeamento: o enviado pela tela (se houver) tem prioridade sobre o do preset.
+  let mapeamento = parseMapeamento(p.mapeamento);
+  if (lida.extra.mapeamento) {
+    try {
+      mapeamento = parseMapeamento(JSON.parse(lida.extra.mapeamento));
+    } catch {
+      return NextResponse.json({ error: "Mapeamento inválido" }, { status: 400 });
+    }
+    if (lida.extra.salvarMapeamento === "1") {
+      await prisma.disparoPreset.update({ where: { id: p.id }, data: { mapeamento: mapeamento as unknown as Prisma.InputJsonValue } });
+    }
+  }
+  const erroMap = validarMapeamento(mapeamento);
+  if (erroMap) return NextResponse.json({ error: erroMap }, { status: 400 });
+
+  // Seleção de linhas (índices na planilha, base 0). Sem "linhas", envia todas.
+  let rows = lida.rows;
+  if (lida.extra.linhas) {
+    try {
+      const idx = JSON.parse(lida.extra.linhas) as unknown;
+      if (!Array.isArray(idx)) throw new Error();
+      const set = new Set(idx.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0 && n < lida.rows.length));
+      rows = lida.rows.filter((_, i) => set.has(i));
+    } catch {
+      return NextResponse.json({ error: "Seleção de linhas inválida" }, { status: 400 });
+    }
+    if (rows.length === 0) return NextResponse.json({ error: "Nenhuma linha selecionada" }, { status: 400 });
+  }
+
+  let camposAdicionais: DcCampoAdicional[] | undefined;
+  try {
+    camposAdicionais = (await getDcOptionsCached()).campos;
+  } catch {
+    /* segue sem conversão de tipos */
+  }
+
   const preset: PresetEnvio = {
     id: p.id,
     nome: p.nome,
+    camposAdicionais,
     listaId: p.listaId,
     tagId,
     tagNome,
     stageId: p.stageId,
     origem: p.origem,
-    filtroColuna: p.filtroColuna,
-    filtroValor: p.filtroValor,
-    mapeamento: parseMapeamento(p.mapeamento),
+    // Quando a tela manda a seleção de linhas, o filtro do preset não se aplica de novo.
+    filtroColuna: lida.extra.linhas ? null : p.filtroColuna,
+    filtroValor: lida.extra.linhas ? null : p.filtroValor,
+    mapeamento,
   };
 
   // Confere se as colunas obrigatórias existem nesta planilha.
@@ -83,6 +125,6 @@ export async function POST(req: Request) {
     );
   }
 
-  const job = await iniciarEnvio(lida.rows, lida.arquivo, preset);
+  const job = await iniciarEnvio(rows, lida.arquivo, preset);
   return NextResponse.json({ id: job.id, total: job.total, tagNome: job.tagNome }, { status: 202 });
 }

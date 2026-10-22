@@ -1,15 +1,9 @@
 import { NextResponse } from "next/server";
 import { ensureMccSession } from "@/lib/mcc/authz";
-import { DataCrazyError, datacrazyConfigured, dcCreateLista, dcCreateTag, dcOptions } from "@/lib/mcc/datacrazy";
+import { DataCrazyError, datacrazyConfigured, dcCreateLista, dcCreateTag } from "@/lib/mcc/datacrazy";
+import { getDcOptionsCached, invalidateDcOptionsCache } from "@/lib/mcc/dcCache";
 
 export const runtime = "nodejs";
-
-// Cache curto do catálogo (listas, tags, funis) para não gastar o limite da API.
-declare global {
-  // eslint-disable-next-line no-var
-  var __mccDcOptionsCache: { at: number; data: unknown } | undefined;
-}
-const CACHE_MS = 2 * 60 * 1000;
 
 /** GET: catálogo do DataCrazy (listas, tags, funis/etapas). ?refresh=1 ignora o cache. */
 export async function GET(req: Request) {
@@ -21,14 +15,8 @@ export async function GET(req: Request) {
   }
 
   const refresh = new URL(req.url).searchParams.get("refresh") === "1";
-  const cache = globalThis.__mccDcOptionsCache;
-  if (!refresh && cache && Date.now() - cache.at < CACHE_MS) {
-    return NextResponse.json({ configured: true, cached: true, ...(cache.data as object) });
-  }
-
   try {
-    const data = await dcOptions();
-    globalThis.__mccDcOptionsCache = { at: Date.now(), data };
+    const data = await getDcOptionsCached(refresh);
     return NextResponse.json({ configured: true, ...data });
   } catch (e) {
     const status = e instanceof DataCrazyError ? e.status : 500;
@@ -54,7 +42,7 @@ export async function POST(req: Request) {
 
   try {
     const created = body.tipo === "lista" ? await dcCreateLista(nome, body.descricao) : await dcCreateTag(nome);
-    globalThis.__mccDcOptionsCache = undefined;
+    invalidateDcOptionsCache();
     return NextResponse.json(created, { status: 201 });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Falha ao criar no DataCrazy" }, { status: 502 });
