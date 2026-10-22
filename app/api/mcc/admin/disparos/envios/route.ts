@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { ensureMccSession } from "@/lib/mcc/authz";
-import { datacrazyConfigured, type DcCampoAdicional } from "@/lib/mcc/datacrazy";
-import { getDcOptionsCached } from "@/lib/mcc/dcCache";
-import { garantirTag, hasRunningEnvio, iniciarEnvio, parseMapeamento, resolverNomeTag, validarMapeamento, type PresetEnvio } from "@/lib/mcc/disparos";
+import { datacrazyConfigured } from "@/lib/mcc/datacrazy";
+import { hasRunningEnvio, iniciarEnvio, parseMapeamento, validarMapeamento, type PresetEnvio } from "@/lib/mcc/disparos";
+import { prepararPreset } from "@/lib/mcc/disparosAuto";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { lerPlanilhaDaRequisicao } from "@/lib/mcc/disparosPlanilha";
 
@@ -46,19 +46,12 @@ export async function POST(req: Request) {
   const p = await prisma.disparoPreset.findUnique({ where: { id: presetId } });
   if (!p) return NextResponse.json({ error: "Disparo não encontrado" }, { status: 404 });
 
-  // Tag fixa do preset (opcional) + tag por envio (nome vindo da tela ou do padrão do preset).
-  let tagId: string | null = null;
-  let tagNome: string | null = null;
-  if (p.tagModo === "por_envio") {
-    const nome = (lida.extra.tagNome || "").trim() || resolverNomeTag(p.tagPadrao, lida.arquivo);
-    if (!nome) return NextResponse.json({ error: "Informe o nome da tag deste envio" }, { status: 400 });
-    try {
-      const t = await garantirTag(nome);
-      tagId = t.id;
-      tagNome = t.name;
-    } catch (e) {
-      return NextResponse.json({ error: `Não foi possível criar a tag no DataCrazy: ${e instanceof Error ? e.message : e}` }, { status: 502 });
-    }
+  // Preset + tag da base (fixa e/ou por envio).
+  let preparado: PresetEnvio;
+  try {
+    preparado = await prepararPreset(p.id, lida.arquivo, lida.extra.tagNome);
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Não foi possível preparar o envio" }, { status: 502 });
   }
 
   // Mapeamento: o enviado pela tela (se houver) tem prioridade sobre o do preset.
@@ -92,26 +85,11 @@ export async function POST(req: Request) {
     if (rows.length === 0) return NextResponse.json({ error: "Nenhuma linha selecionada" }, { status: 400 });
   }
 
-  let camposAdicionais: DcCampoAdicional[] | undefined;
-  try {
-    camposAdicionais = (await getDcOptionsCached()).campos;
-  } catch {
-    /* segue sem conversão de tipos */
-  }
-
   const preset: PresetEnvio = {
-    id: p.id,
-    nome: p.nome,
-    camposAdicionais,
-    listaId: p.listaId,
-    tagFixaId: p.tagId,
-    tagId,
-    tagNome: tagNome ?? p.tagNome,
-    stageId: p.stageId,
-    origem: p.origem,
+    ...preparado,
     // Quando a tela manda a seleção de linhas, o filtro do preset não se aplica de novo.
-    filtroColuna: lida.extra.linhas ? null : p.filtroColuna,
-    filtroValor: lida.extra.linhas ? null : p.filtroValor,
+    filtroColuna: lida.extra.linhas ? null : preparado.filtroColuna,
+    filtroValor: lida.extra.linhas ? null : preparado.filtroValor,
     mapeamento,
   };
 

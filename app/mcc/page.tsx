@@ -35,6 +35,7 @@ interface ProcessResult {
   downloadUrl: string;
   filename: string;
   jobId: string;
+  envioAuto: { envioId: number | null; motivo: string | null; tagNome: string | null; selecionadas: number } | null;
 }
 
 const POLL_INTERVAL_MS = 3000;
@@ -136,6 +137,7 @@ export default function MccDashboard() {
           downloadUrl,
           filename: data.resultFilename,
           jobId,
+          envioAuto: data.envioAuto ?? null,
         });
         setLoading(false);
         setProgressMsg("");
@@ -404,6 +406,20 @@ export default function MccDashboard() {
                   </Card>
                 ))}
               </div>
+
+              {result.envioAuto && (
+                <div className={`flex items-start gap-3 rounded-xl border px-5 py-4 text-sm ${result.envioAuto.envioId ? "border-mcc-blue/30 bg-mcc-light/60 text-slate-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                  <Rocket className="mt-0.5 size-4 shrink-0" />
+                  {result.envioAuto.envioId ? (
+                    <span>
+                      <b>Envio automático ao DataCrazy iniciado</b> — {result.envioAuto.selecionadas.toLocaleString("pt-BR")} lead(s){result.envioAuto.tagNome ? `, tag "${result.envioAuto.tagNome}"` : ""}.{" "}
+                      <a className="font-medium text-mcc-blue underline" href={`/mcc/admin/disparos?envioId=${result.envioAuto.envioId}`}>Acompanhar</a>
+                    </span>
+                  ) : (
+                    <span><b>Envio automático não iniciado:</b> {result.envioAuto.motivo}</span>
+                  )}
+                </div>
+              )}
 
               {/* Download Section */}
               <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-emerald-100 bg-emerald-50/50 p-8 text-center">

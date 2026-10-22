@@ -118,6 +118,7 @@ export default function DisparosPage() {
 function DisparosInner() {
   const searchParams = useSearchParams();
   const jobIdParam = searchParams.get("jobId");
+  const envioIdParam = searchParams.get("envioId");
 
   const [tab, setTab] = useState<"enviar" | "disparos" | "historico">("enviar");
   const [options, setOptions] = useState<DcOptions | null>(null);
@@ -194,7 +195,7 @@ function DisparosInner() {
       </div>
 
       {tab === "enviar" && (
-        <EnviarTab presets={presets} presetsLoading={presetsLoading} options={options} jobIdParam={jobIdParam} onIrParaDisparos={() => setTab("disparos")} />
+        <EnviarTab presets={presets} presetsLoading={presetsLoading} options={options} jobIdParam={jobIdParam} envioIdParam={envioIdParam} onIrParaDisparos={() => setTab("disparos")} />
       )}
       {tab === "disparos" && (
         <DisparosTab presets={presets} loading={presetsLoading} options={options} onChanged={loadPresets} onOptionsChanged={() => loadOptions(true)} />
@@ -231,8 +232,8 @@ function ConexaoBadge({ options, loading, onRefresh }: { options: DcOptions | nu
 // Aba: Enviar
 // ---------------------------------------------------------------------------
 
-function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDisparos }: {
-  presets: Preset[]; presetsLoading: boolean; options: DcOptions | null; jobIdParam: string | null; onIrParaDisparos: () => void;
+function EnviarTab({ presets, presetsLoading, options, jobIdParam, envioIdParam, onIrParaDisparos }: {
+  presets: Preset[]; presetsLoading: boolean; options: DcOptions | null; jobIdParam: string | null; envioIdParam: string | null; onIrParaDisparos: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -288,6 +289,15 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
   }, []);
 
   useEffect(() => { if (jobIdParam) void lerPlanilha(null, jobIdParam); }, [jobIdParam, lerPlanilha]);
+  // Abre direto o acompanhamento de um envio (ex.: envio automático iniciado após o processamento).
+  useEffect(() => {
+    const id = Number(envioIdParam);
+    if (Number.isInteger(id) && id > 0) {
+      setEnvio({ id, status: "pending", progressMsg: "Carregando...", processed: 0, total: 0, filtrados: 0, criados: 0, atualizados: 0, falhas: 0, erros: [] });
+      void poll(id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [envioIdParam]);
 
   function handleFile(f: File | undefined) {
     if (!f) return;
@@ -493,8 +503,8 @@ function EnviarTab({ presets, presetsLoading, options, jobIdParam, onIrParaDispa
     return (
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 bg-slate-50/50 px-8 py-5">
-          <h2 className="font-semibold text-slate-800">Envio #{envio.id} — {preset?.nome}</h2>
-          <p className="mt-1 text-sm text-slate-500">{info?.arquivo}{envio.tagNome ? ` · tag ${envio.tagNome}` : ""}</p>
+          <h2 className="font-semibold text-slate-800">Envio #{envio.id}{preset ? ` — ${preset.nome}` : ""}</h2>
+          <p className="mt-1 text-sm text-slate-500">{info?.arquivo ?? ""}{envio.tagNome ? ` · tag ${envio.tagNome}` : ""}</p>
         </div>
         <div className="flex flex-col gap-5 p-8">
           <div className="flex items-center gap-3">
@@ -861,6 +871,42 @@ function Linha({ icon: Icon, label, value }: { icon: typeof Tag; label: string; 
 // Aba: Disparos (presets)
 // ---------------------------------------------------------------------------
 
+function AutoConfigPanel({ presets }: { presets: Preset[] }) {
+  const [cfg, setCfg] = useState<{ ativo: boolean; presetId: number | null; pularEnviados: boolean } | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState("");
+  useEffect(() => { fetch("/api/mcc/admin/disparos/config").then((r) => r.json()).then(setCfg).catch(() => setCfg({ ativo: false, presetId: null, pularEnviados: true })); }, []);
+  async function salvar(next: { ativo: boolean; presetId: number | null; pularEnviados: boolean }) {
+    setCfg(next); setSalvando(true); setMsg("");
+    try {
+      const res = await fetch("/api/mcc/admin/disparos/config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(next) });
+      const data = await res.json();
+      if (!res.ok) setMsg(data.error || "Não foi possível salvar"); else setMsg("Salvo");
+    } finally { setSalvando(false); setTimeout(() => setMsg(""), 2500); }
+  }
+  if (!cfg) return null;
+  return (
+    <div className={cn("flex flex-wrap items-center gap-4 rounded-2xl border px-6 py-4 shadow-sm", cfg.ativo ? "border-mcc-blue/30 bg-mcc-light/50" : "border-slate-200 bg-white")}>
+      <label className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+        <input type="checkbox" checked={cfg.ativo} onChange={(e) => salvar({ ...cfg, ativo: e.target.checked })} />
+        Envio automático após processar a planilha
+      </label>
+      <select className={cn(selectCls, "w-72")} value={cfg.presetId ?? ""} onChange={(e) => salvar({ ...cfg, presetId: e.target.value ? Number(e.target.value) : null })}>
+        <option value="">Escolha o disparo...</option>
+        {presets.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+      </select>
+      <label className="flex items-center gap-2 text-sm text-slate-700">
+        <input type="checkbox" checked={cfg.pularEnviados} onChange={(e) => salvar({ ...cfg, pularEnviados: e.target.checked })} />
+        Não reenviar quem já foi enviado
+      </label>
+      <span className="text-xs text-slate-500">{salvando ? "Salvando..." : msg}</span>
+      <p className="w-full text-xs text-slate-500">
+        Com isso ligado, ao terminar &quot;Processar Planilha&quot; os leads com cobertura vão direto ao DataCrazy com o disparo escolhido (filtro do disparo, tag da base pelo nome do arquivo). Você só sobe a planilha.
+      </p>
+    </div>
+  );
+}
+
 function DisparosTab({ presets, loading, options, onChanged, onOptionsChanged }: {
   presets: Preset[]; loading: boolean; options: DcOptions | null; onChanged: () => void; onOptionsChanged: () => void;
 }) {
@@ -885,6 +931,8 @@ function DisparosTab({ presets, loading, options, onChanged, onOptionsChanged }:
   }
 
   return (
+    <div className="flex flex-col gap-6">
+    <AutoConfigPanel presets={presets} />
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/50 px-8 py-5">
         <div>
@@ -918,6 +966,7 @@ function DisparosTab({ presets, loading, options, onChanged, onOptionsChanged }:
           </div>
         ))}
       </div>
+    </div>
     </div>
   );
 }

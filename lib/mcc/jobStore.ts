@@ -28,6 +28,8 @@ export interface ProcessJob {
     creditsRemaining: number | null;
   };
   errorMessage?: string;
+  /** resultado do envio automático ao DataCrazy (se configurado) */
+  envioAuto?: { envioId: number | null; motivo: string | null; tagNome: string | null; selecionadas: number };
 }
 
 const JOB_TTL_MS = 60 * 60 * 1000; // 1 hour

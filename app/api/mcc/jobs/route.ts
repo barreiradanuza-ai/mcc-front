@@ -7,6 +7,7 @@ import { buildCoverageString, resolveClaroPromoCeps } from "@/lib/mcc/coverage";
 import { normalizePhone, checkWhatsAppBulk } from "@/lib/mcc/validators/whatsappChecker";
 import { createJob, updateJob } from "@/lib/mcc/jobStore";
 import { COLUNA_ENVIADO, consultarEnviados, fmtDataBR } from "@/lib/mcc/disparos";
+import { envioAutomatico } from "@/lib/mcc/disparosAuto";
 import { ensureMccSession } from "@/lib/mcc/authz";
 import { randomUUID } from "crypto";
 
@@ -243,9 +244,22 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
     const resultFilename = `${safeName}_cobertura.xlsx`;
     const elapsedMs = Math.round(performance.now() - t0);
 
+
+    // Envio automático ao DataCrazy (se configurado em Disparos).
+    let envioAuto: { envioId: number | null; motivo: string | null; tagNome: string | null; selecionadas: number } | undefined;
+    try {
+      const auto = await envioAutomatico(Object.keys(outputRows[0] ?? {}), outputRows, resultFilename);
+      envioAuto = { envioId: auto.envioId, motivo: auto.motivo ?? null, tagNome: auto.tagNome ?? null, selecionadas: auto.selecionadas ?? 0 };
+      if (auto.envioId) console.log(`[job:${jobId}] envio automático #${auto.envioId} iniciado (${auto.selecionadas} leads, tag ${auto.tagNome}).`);
+    } catch (e) {
+      console.warn(`[job:${jobId}] envio automático falhou:`, e instanceof Error ? e.message : e);
+      envioAuto = { envioId: null, motivo: e instanceof Error ? e.message : "Falha no envio automático", tagNome: null, selecionadas: 0 };
+    }
+
     updateJob(jobId, {
       status: "done",
       progressMsg: "Processamento concluído!",
+      envioAuto,
       resultBase64: outBuffer.toString("base64"),
       resultFilename,
       resultStats: {
@@ -265,6 +279,7 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
     });
 
     console.log(`[job:${jobId}] Concluído em ${elapsedMs}ms. ${withCoverage} com cobertura, ${withoutCoverage} sem cobertura.`);
+
   } catch (err) {
     console.error(`[job:${jobId}] Erro:`, err);
     const message = err instanceof Error ? err.message : "Erro interno ao processar planilha";

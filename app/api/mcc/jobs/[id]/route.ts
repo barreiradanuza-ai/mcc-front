@@ -30,6 +30,7 @@ export async function GET(
       ? {
           resultFilename: job.resultFilename,
           resultStats: job.resultStats,
+          envioAuto: job.envioAuto ?? null,
         }
       : {}),
     ...(job.status === "error" ? { errorMessage: job.errorMessage } : {}),
