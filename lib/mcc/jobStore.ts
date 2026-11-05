@@ -26,6 +26,8 @@ export interface ProcessJob {
     newCpfsSaved: number;
     elapsedMs: number;
     creditsRemaining: number | null;
+    /** motivo pelo qual a validação de WhatsApp foi pulada (ex.: sem crédito); null quando rodou normalmente */
+    whatsappSkippedReason?: string | null;
   };
   errorMessage?: string;
   /** resultado do envio automático ao DataCrazy (se configurado) */

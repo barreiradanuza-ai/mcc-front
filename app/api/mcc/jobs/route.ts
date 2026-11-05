@@ -65,6 +65,7 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
     let incorrectNumber = 0;
     let withoutWhatsApp = 0;
     let whatsappValidIndices: number[];
+    let whatsappSkippedReason: string | null = null;
 
     if (contatoCol) {
       const phoneValidLocalIdx: number[] = [];
@@ -84,17 +85,33 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
         progressTotal: uniquePhones.length,
       });
 
-      const { existsSet: whatsappSet } = await checkWhatsAppBulk(uniquePhones, (checked, total) => {
-        updateJob(jobId, {
-          progressMsg: `WhatsApp: ${checked}/${total} números verificados`,
-          progressChecked: checked,
-          progressTotal: total,
+      // A validação de WhatsApp NÃO condiciona a análise de viabilidade: se o
+      // validador falhar (sem crédito na CheckNumber.ai, chave ausente, lote
+      // abaixo do mínimo, timeout...), a etapa é pulada e todos os números
+      // com formato válido seguem para a verificação de cobertura.
+      let whatsappSet: Set<string> | null = null;
+      try {
+        const result = await checkWhatsAppBulk(uniquePhones, (checked, total) => {
+          updateJob(jobId, {
+            progressMsg: `WhatsApp: ${checked}/${total} números verificados`,
+            progressChecked: checked,
+            progressTotal: total,
+          });
         });
-      });
+        whatsappSet = result.existsSet;
+      } catch (e) {
+        whatsappSkippedReason = e instanceof Error ? e.message : String(e);
+        console.warn(`[job:${jobId}] validação de WhatsApp pulada — ${whatsappSkippedReason}`);
+        updateJob(jobId, { progressMsg: "Validação de WhatsApp indisponível — seguindo para a análise de viabilidade..." });
+      }
 
-      const whatsappValidLocalIdx = phoneValidLocalIdx.filter((li) => whatsappSet.has(normalizedPhones[li] as string));
-      withoutWhatsApp = phoneValidLocalIdx.length - whatsappValidLocalIdx.length;
-      whatsappValidIndices = whatsappValidLocalIdx.map((li) => filteredIndices[li]);
+      if (whatsappSet) {
+        const whatsappValidLocalIdx = phoneValidLocalIdx.filter((li) => whatsappSet!.has(normalizedPhones[li] as string));
+        withoutWhatsApp = phoneValidLocalIdx.length - whatsappValidLocalIdx.length;
+        whatsappValidIndices = whatsappValidLocalIdx.map((li) => filteredIndices[li]);
+      } else {
+        whatsappValidIndices = phoneValidLocalIdx.map((li) => filteredIndices[li]);
+      }
     } else {
       whatsappValidIndices = filteredIndices;
     }
@@ -285,6 +302,7 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
         // Saldo é consultado ao vivo em /api/mcc/admin/checknumber/balance, não por job
         // (a API de tasks não retorna saldo restante por chamada).
         creditsRemaining: null,
+        whatsappSkippedReason,
       },
     });
 

@@ -37,6 +37,7 @@ interface ProcessResult {
   jobId: string;
   envioAuto: { envioId: number | null; motivo: string | null; tagNome: string | null; selecionadas: number } | null;
   baseId: number | null;
+  whatsappSkippedReason: string | null;
 }
 
 const POLL_INTERVAL_MS = 3000;
@@ -140,6 +141,7 @@ export default function MccDashboard() {
           jobId,
           envioAuto: data.envioAuto ?? null,
           baseId: data.baseId ?? null,
+          whatsappSkippedReason: stats.whatsappSkippedReason ?? null,
         });
         setLoading(false);
         setProgressMsg("");
@@ -382,6 +384,15 @@ export default function MccDashboard() {
           {/* Results */}
           {result && (
             <div className="flex flex-col gap-6">
+              {result.whatsappSkippedReason && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    A validação de WhatsApp não foi executada ({result.whatsappSkippedReason}). A análise de viabilidade
+                    seguiu normalmente considerando todos os números com formato válido.
+                  </span>
+                </div>
+              )}
               {/* Stats Grid */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {([
