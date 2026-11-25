@@ -23,6 +23,13 @@ function findCpfHeader(headers: string[]): string | undefined {
   );
 }
 
+// Data (dd/mm/aaaa, horário de Brasília) em que o CPF entrou na base.
+function fmtDataBrasilia(d: Date): string {
+  return d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+}
+
+const COLUNA_CPF_DUPLICADO = "CPF DUPLICADO";
+
 async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], headers: string[], filename: string) {
   const t0 = performance.now();
   const cepCol = headers.find((h) => h.toLowerCase().trim() === "cep")!;
@@ -35,27 +42,39 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
     const normalizedCpfs = rows.map((r) => normalizeCpf(r[cpfCol]));
     const validCpfs = [...new Set(normalizedCpfs.filter((c): c is string => c !== null))];
 
-    let existingCpfSet = new Set<string>();
-    if (validCpfs.length > 0) {
+    // CPFs duplicados NÃO são removidos: a linha segue normalmente e ganha a
+    // coluna "CPF DUPLICADO" com a data em que o CPF apareceu antes (na base
+    // de processamentos anteriores ou, se repetido na própria planilha, "Nesta planilha").
+    const existingCpfDate = new Map<string, Date>();
+    const chunkSizeLookup = 5000;
+    for (let i = 0; i < validCpfs.length; i += chunkSizeLookup) {
       const existing = await prisma.cpfCobertura.findMany({
-        where: { cpf: { in: validCpfs } },
-        select: { cpf: true },
+        where: { cpf: { in: validCpfs.slice(i, i + chunkSizeLookup) } },
+        select: { cpf: true, createdAt: true },
       });
-      existingCpfSet = new Set(existing.map((r) => r.cpf));
+      for (const r of existing) existingCpfDate.set(r.cpf, r.createdAt);
     }
 
-    const filteredIndices: number[] = [];
-    let skippedCpfs = 0;
+    const cpfDuplicado: string[] = new Array(rows.length).fill("");
+    const seenInSheet = new Set<string>();
+    let skippedCpfs = 0; // agora: quantidade de linhas com CPF duplicado (mantidas)
     for (let i = 0; i < rows.length; i++) {
       const cpf = normalizedCpfs[i];
-      if (cpf && existingCpfSet.has(cpf)) {
+      if (!cpf) continue;
+      const prev = existingCpfDate.get(cpf);
+      if (prev) {
+        cpfDuplicado[i] = fmtDataBrasilia(prev);
         skippedCpfs++;
-      } else {
-        filteredIndices.push(i);
+      } else if (seenInSheet.has(cpf)) {
+        cpfDuplicado[i] = "Nesta planilha";
+        skippedCpfs++;
       }
+      seenInSheet.add(cpf);
     }
 
-    updateJob(jobId, { progressMsg: `${skippedCpfs} CPFs duplicados removidos. ${filteredIndices.length} linhas para processar.` });
+    const filteredIndices: number[] = rows.map((_, i) => i);
+
+    updateJob(jobId, { progressMsg: `${skippedCpfs} CPFs duplicados marcados. ${filteredIndices.length} linhas para processar.` });
 
     // --- Phone / WhatsApp validation ---------------------------------------
     // Only runs when the sheet actually has a CONTATO column; sheets without
@@ -209,20 +228,24 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
         continue;
       }
 
+      // Extrai tudo: só saem da planilha os números de WhatsApp inválidos (acima).
+      const outRow = { ...formatOutputRow(rows[origIdx], li), Cobertura: coverage, ...coverageFlags(coverage), [COLUNA_CPF_DUPLICADO]: cpfDuplicado[origIdx] };
+
       if (coverage === "CEP inválido") {
         invalid++;
-        outputRows.push({ ...formatOutputRow(rows[origIdx], li), Cobertura: coverage, ...coverageFlags(coverage) });
+        outputRows.push(outRow);
         continue;
       }
 
       if (coverage === "Sem cobertura") {
         withoutCoverage++;
+        outputRows.push(outRow);
         if (cpf) cpfsToSave.push({ cpf, cep, contato: contatoForDb, cobertura: coverage, motivoRecusa: "Sem cobertura" });
         continue;
       }
 
       withCoverage++;
-      outputRows.push({ ...formatOutputRow(rows[origIdx], li), Cobertura: coverage, ...coverageFlags(coverage) });
+      outputRows.push(outRow);
       if (cpf) cpfsToSave.push({ cpf, cep, contato: contatoForDb, cobertura: coverage, motivoRecusa: null });
     }
 
@@ -274,7 +297,10 @@ async function runProcessingJob(jobId: string, rows: Record<string, unknown>[], 
     // Envio automático ao DataCrazy (se configurado em Disparos).
     let envioAuto: { envioId: number | null; motivo: string | null; tagNome: string | null; selecionadas: number } | undefined;
     try {
-      const auto = await envioAutomatico(Object.keys(outputRows[0] ?? {}), outputRows, resultFilename);
+      // A planilha agora traz também "Sem cobertura"; o envio automático continua
+      // só com as linhas que já iam antes (com cobertura ou CEP inválido).
+      const rowsParaEnvio = outputRows.filter((r) => r.Cobertura !== "Sem cobertura");
+      const auto = await envioAutomatico(Object.keys(outputRows[0] ?? {}), rowsParaEnvio, resultFilename);
       envioAuto = { envioId: auto.envioId, motivo: auto.motivo ?? null, tagNome: auto.tagNome ?? null, selecionadas: auto.selecionadas ?? 0 };
       if (auto.envioId) console.log(`[job:${jobId}] envio automático #${auto.envioId} iniciado (${auto.selecionadas} leads, tag ${auto.tagNome}).`);
     } catch (e) {
