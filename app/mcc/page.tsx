@@ -253,7 +253,7 @@ export default function MccDashboard() {
           <p className="mt-1 text-sm text-slate-500">
             A planilha deve ter colunas &quot;CEP&quot; e &quot;CPF&quot;. Se houver uma coluna &quot;CONTATO&quot;,
             os números serão validados no WhatsApp antes da checagem de cobertura.
-            CPFs já processados serão removidos e uma coluna &quot;Cobertura&quot; será adicionada.
+            Todas as linhas são extraídas (só números de WhatsApp inválidos são removidos). Serão adicionadas as colunas &quot;Cobertura&quot; e &quot;CPF DUPLICADO&quot; (data em que o CPF já apareceu).
           </p>
         </div>
 
@@ -401,7 +401,7 @@ export default function MccDashboard() {
                   { label: "Sem cobertura", value: result.withoutCoverage, Icon: XCircle, color: "text-red-600", bg: "bg-red-50" },
                   { label: "Sem WhatsApp", value: result.withoutWhatsApp, Icon: MessageSquareOff, color: "text-orange-600", bg: "bg-orange-50" },
                   { label: "Número incorreto", value: result.incorrectNumber, Icon: PhoneOff, color: "text-orange-600", bg: "bg-orange-50" },
-                  { label: "CPFs duplicados", value: result.skippedCpfs, Icon: UserX, color: "text-amber-600", bg: "bg-amber-50" },
+                  { label: "CPFs duplicados (marcados)", value: result.skippedCpfs, Icon: UserX, color: "text-amber-600", bg: "bg-amber-50" },
                   { label: "CEP inválido", value: result.invalid, Icon: AlertTriangle, color: "text-slate-600", bg: "bg-slate-50" },
                 ] as const).map((s) => (
                   <Card key={s.label} className="gap-0 py-3">
